@@ -1,0 +1,10 @@
+name = "cc-agent-worker"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+
+# ANTHROPIC_API_KEY is set via secret, not here:
+#   npx wrangler secret put ANTHROPIC_API_KEY
+
+[[kv_namespaces]]
+binding = "APPLICATION_DRAFTS"
+id = "3e94adc8c9924dcaac0af37f763e11b3"
