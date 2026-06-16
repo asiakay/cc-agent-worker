@@ -1,13 +1,22 @@
 {
   "name": "cc-agent-worker",
-  "version": "1.0.0",
-  "description": "Cloudflare Worker AI agent for application drafting",
+  "version": "2.0.0",
+  "description": "Cloudflare Worker AI agent for cannabis cultivator license application drafting, powered by Anthropic Claude.",
   "main": "src/index.js",
+  "type": "module",
   "scripts": {
+    "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "dev": "wrangler dev"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.55.0"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "^2.0.0",
+    "vitest": "^2.0.0",
     "wrangler": "^3.0.0"
   }
 }

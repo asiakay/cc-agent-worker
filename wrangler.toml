@@ -2,9 +2,16 @@ name = "cc-agent-worker"
 main = "src/index.js"
 compatibility_date = "2024-09-23"
 
-# ANTHROPIC_API_KEY is set via secret, not here:
-#   npx wrangler secret put ANTHROPIC_API_KEY
+# ─── Secrets ─────────────────────────────────────────────────────────────────
+# Never hardcode your API key here. Store it with:
+#   npx wrangler secret put GEMINI_API_KEY
+# Then paste your key when prompted. Wrangler encrypts it and injects it as
+# env.GEMINI_API_KEY at runtime.
 
+# ─── KV Namespace ─────────────────────────────────────────────────────────────
+# Create with: npx wrangler kv:namespace create APPLICATION_DRAFTS
+# Then paste the returned id and preview_id into the block below.
 [[kv_namespaces]]
 binding = "APPLICATION_DRAFTS"
 id = "3e94adc8c9924dcaac0af37f763e11b3"
+preview_id = "3e94adc8c9924dcaac0af37f763e11b3"
