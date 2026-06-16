@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { renderUI } from "./ui.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -60,13 +61,10 @@ export default {
       return new Response(null, { headers: CORS_HEADERS });
     }
 
-    // Health-check endpoint
     if (request.method === "GET") {
-      return json({
-        status: "ok",
-        service: "cc-agent-worker",
-        description:
-          "POST JSON with { sectionName, task } to generate a license application draft.",
+      return new Response(renderUI(), {
+        status: 200,
+        headers: { "Content-Type": "text/html;charset=UTF-8", ...CORS_HEADERS },
       });
     }
 
