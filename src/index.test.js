@@ -2,15 +2,33 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import worker, { buildSystemInstruction, buildPrompt } from "./index.js";
 
 // ---------------------------------------------------------------------------
-// Mock the Google GenAI SDK so tests never make real network calls
+// Mock the Anthropic SDK so tests never make real network calls
 // ---------------------------------------------------------------------------
-const mockGenerateContent = vi.fn();
+const mockStream = vi.fn();
 
-vi.mock("@google/genai", () => ({
-  GoogleGenAI: vi.fn().mockImplementation(() => ({
-    models: { generateContent: mockGenerateContent },
-  })),
-}));
+vi.mock("@anthropic-ai/sdk", () => {
+  const MockAnthropic = vi.fn().mockImplementation(() => ({
+    messages: {
+      stream: mockStream,
+    },
+  }));
+  return { default: MockAnthropic };
+});
+
+const MOCK_DRAFT = "## Environmental Plan\n\nThis facility shall install...";
+
+function makeFinalMessage(text = MOCK_DRAFT) {
+  return {
+    content: [{ type: "text", text }],
+    stop_reason: "end_turn",
+  };
+}
+
+function makeStreamHandle(finalMsg) {
+  return {
+    finalMessage: vi.fn().mockResolvedValue(finalMsg),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Minimal KV namespace mock
@@ -29,7 +47,7 @@ function makeKV() {
 // ---------------------------------------------------------------------------
 function makeEnv(overrides = {}) {
   return {
-    GEMINI_API_KEY: "test-gemini-key",
+    ANTHROPIC_API_KEY: "test-anthropic-key",
     APPLICATION_DRAFTS: makeKV(),
     ...overrides,
   };
@@ -54,10 +72,8 @@ function options() {
   });
 }
 
-const MOCK_DRAFT = "## Environmental Plan\n\nThis facility shall install...";
-
 beforeEach(() => {
-  mockGenerateContent.mockResolvedValue({ text: MOCK_DRAFT });
+  mockStream.mockReturnValue(makeStreamHandle(makeFinalMessage()));
 });
 
 afterEach(() => {
@@ -177,15 +193,15 @@ describe("POST validation", () => {
     expect(res.status).toBe(400);
   });
 
-  it("returns 500 when GEMINI_API_KEY is not set", async () => {
-    const env = makeEnv({ GEMINI_API_KEY: undefined });
+  it("returns 500 when ANTHROPIC_API_KEY is not set", async () => {
+    const env = makeEnv({ ANTHROPIC_API_KEY: undefined });
     const res = await worker.fetch(
       post({ sectionName: "Section 1", task: "plan" }),
       env
     );
     expect(res.status).toBe(500);
     const body = await res.json();
-    expect(body.error).toMatch(/GEMINI_API_KEY/i);
+    expect(body.error).toMatch(/ANTHROPIC_API_KEY/i);
   });
 });
 
@@ -241,8 +257,8 @@ describe("POST happy path", () => {
       post({ sectionName: "Staffing Plan", task: "background checks" }),
       env
     );
-    const callArg = mockGenerateContent.mock.calls[0][0];
-    expect(callArg.model).toBe("gemini-2.0-flash");
+    const callArg = mockStream.mock.calls[0][0];
+    expect(callArg.model).toBe("claude-opus-4-8");
   });
 
   it("embeds sectionName and task in the generation prompt", async () => {
@@ -251,21 +267,21 @@ describe("POST happy path", () => {
       post({ sectionName: "Waste Management", task: "compostable organic waste" }),
       env
     );
-    const callArg = mockGenerateContent.mock.calls[0][0];
-    const promptText = callArg.contents[0].parts[0].text;
+    const callArg = mockStream.mock.calls[0][0];
+    const promptText = callArg.messages[0].content;
     expect(promptText).toContain("Waste Management");
     expect(promptText).toContain("compostable organic waste");
   });
 
-  it("includes temperature and maxOutputTokens in config", async () => {
+  it("includes max_tokens and thinking in config", async () => {
     const env = makeEnv();
     await worker.fetch(
       post({ sectionName: "Transport Plan", task: "GPS tracking" }),
       env
     );
-    const { config } = mockGenerateContent.mock.calls[0][0];
-    expect(config.temperature).toBeLessThanOrEqual(1);
-    expect(config.maxOutputTokens).toBeGreaterThan(0);
+    const callArg = mockStream.mock.calls[0][0];
+    expect(callArg.max_tokens).toBeGreaterThan(0);
+    expect(callArg.thinking).toEqual({ type: "adaptive" });
   });
 
   it("sets CORS headers on 200 response", async () => {
@@ -282,8 +298,10 @@ describe("POST happy path", () => {
 // Integration: error handling
 // ---------------------------------------------------------------------------
 describe("error handling", () => {
-  it("returns 502 when Gemini returns empty text", async () => {
-    mockGenerateContent.mockResolvedValueOnce({ text: "" });
+  it("returns 502 when Claude returns empty text", async () => {
+    mockStream.mockReturnValueOnce(
+      makeStreamHandle({ content: [{ type: "text", text: "" }], stop_reason: "end_turn" })
+    );
     const res = await worker.fetch(
       post({ sectionName: "Section B", task: "task B" }),
       makeEnv()
@@ -294,7 +312,9 @@ describe("error handling", () => {
   });
 
   it("returns 500 when SDK throws", async () => {
-    mockGenerateContent.mockRejectedValueOnce(new Error("Quota exceeded"));
+    mockStream.mockReturnValueOnce({
+      finalMessage: vi.fn().mockRejectedValueOnce(new Error("Quota exceeded")),
+    });
     const res = await worker.fetch(
       post({ sectionName: "Section C", task: "task C" }),
       makeEnv()
@@ -305,7 +325,9 @@ describe("error handling", () => {
   });
 
   it("returns 500 with message when SDK throws without message", async () => {
-    mockGenerateContent.mockRejectedValueOnce({});
+    mockStream.mockReturnValueOnce({
+      finalMessage: vi.fn().mockRejectedValueOnce({}),
+    });
     const res = await worker.fetch(
       post({ sectionName: "Section D", task: "task D" }),
       makeEnv()

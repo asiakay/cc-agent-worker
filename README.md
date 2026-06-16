@@ -1,8 +1,8 @@
 # cc-agent-worker
 
 A Cloudflare Worker that drafts Massachusetts adult-use cannabis cultivator
-license application sections using Google Gemini, with completed drafts
-auto-saved to Cloudflare KV storage.
+license application sections using Anthropic Claude (Opus 4.8 with adaptive
+thinking), with completed drafts auto-saved to Cloudflare KV storage.
 
 ---
 
@@ -15,7 +15,7 @@ POST /  { sectionName, task }
    Input validation
           │
           ▼
-  Google Gemini 2.0 Flash
+  Anthropic Claude Opus 4.8
   (regulatory persona + CMR citations)
           │
           ▼
@@ -53,7 +53,7 @@ cc-agent-worker/
 
 - Node.js 18+
 - A [Cloudflare account](https://dash.cloudflare.com/sign-up)
-- A [Google AI Studio API key](https://aistudio.google.com/app/apikey)
+- An [Anthropic API key](https://console.anthropic.com/)
 
 ---
 
@@ -88,10 +88,10 @@ id = "abc123..."
 Open `wrangler.toml` and replace the `id` (and `preview_id`) placeholders
 with the values from the output.
 
-### 4 — Store your Gemini API key as a secret
+### 4 — Store your Anthropic API key as a secret
 
 ```bash
-npx wrangler secret put GEMINI_API_KEY
+npx wrangler secret put ANTHROPIC_API_KEY
 ```
 
 Paste your key when prompted. Wrangler encrypts it — it will never appear
@@ -202,8 +202,8 @@ Each value is a JSON record:
 |--------|------|
 | 400 | Missing or blank `sectionName` or `task`, or invalid JSON |
 | 405 | Any method other than GET, POST, OPTIONS |
-| 500 | `GEMINI_API_KEY` secret not configured, or unexpected exception |
-| 502 | Gemini returned an empty response |
+| 500 | `ANTHROPIC_API_KEY` secret not configured, or unexpected exception |
+| 502 | Claude returned an empty response |
 
 All error bodies follow `{ "error": "<message>" }`.
 
@@ -213,7 +213,7 @@ All error bodies follow `{ "error": "<message>" }`.
 
 | Name | How to set | Required |
 |------|------------|----------|
-| `GEMINI_API_KEY` | `npx wrangler secret put GEMINI_API_KEY` | Yes |
+| `ANTHROPIC_API_KEY` | `npx wrangler secret put ANTHROPIC_API_KEY` | Yes |
 | `APPLICATION_DRAFTS` | KV binding in `wrangler.toml` | No (drafts won't be persisted) |
 
 ---

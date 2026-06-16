@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import Anthropic from "@anthropic-ai/sdk";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -90,30 +90,29 @@ export default {
       return json({ error: 'Missing or empty required field: "task".' }, 400);
     }
 
-    if (!env.GEMINI_API_KEY) {
+    if (!env.ANTHROPIC_API_KEY) {
       return json(
-        { error: "GEMINI_API_KEY secret is not configured on this Worker." },
+        { error: "ANTHROPIC_API_KEY secret is not configured on this Worker." },
         500
       );
     }
 
     try {
-      const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
+      const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 
-      const response = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
-        contents: [{ role: "user", parts: [{ text: buildPrompt(sectionName, task) }] }],
-        config: {
-          systemInstruction: buildSystemInstruction(),
-          temperature: 0.4,
-          maxOutputTokens: 4096,
-        },
+      const stream = client.messages.stream({
+        model: "claude-opus-4-8",
+        max_tokens: 16000,
+        thinking: { type: "adaptive" },
+        system: buildSystemInstruction(),
+        messages: [{ role: "user", content: buildPrompt(sectionName, task) }],
       });
 
-      const generatedDraft = response.text;
+      const response = await stream.finalMessage();
+      const generatedDraft = response.content.find((b) => b.type === "text")?.text;
 
       if (!generatedDraft) {
-        return json({ error: "Gemini returned an empty response." }, 502);
+        return json({ error: "Claude returned an empty response." }, 502);
       }
 
       let savedToKV = false;
