@@ -194,7 +194,7 @@ Return ONLY the JSON array with no markdown fences, no commentary, no preamble.`
       try {
         const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
         const response = await client.messages.create({
-          model: "claude-sonnet-4-6",
+          model: "claude-haiku-4-5-20251001",
           max_tokens: 2048,
           system: systemPrompt,
           messages: [{ role: "user", content: userPrompt }],
