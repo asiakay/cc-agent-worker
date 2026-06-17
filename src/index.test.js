@@ -258,14 +258,14 @@ describe("POST /api/auth", () => {
     expect(res.status).toBe(401);
   });
 
-  it("returns 500 when neither ADMIN_TOKEN nor demo token is provided", async () => {
+  it("returns 401 for a wrong token even when ADMIN_TOKEN is not set", async () => {
     const res = await worker.fetch(
       post({}, "/api/auth", { Authorization: "Bearer wrong" }),
       makeEnv({ ADMIN_TOKEN: undefined })
     );
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(401);
     const body = await res.json();
-    expect(body.error).toMatch(/ADMIN_TOKEN not configured/i);
+    expect(body.error).toMatch(/invalid token/i);
   });
 });
 
