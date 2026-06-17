@@ -91,6 +91,58 @@ any [OPERATOR TO CONFIRM] placeholders where site-specific details are needed.
 }
 
 /**
+ * Build system prompt for the parcel identification report.
+ */
+function buildParcelSystemPrompt() {
+  return `You are a Massachusetts real estate and cannabis zoning specialist with deep knowledge of Massachusetts General Laws Chapter 40A (Zoning Act), CCC regulations (935 CMR 500.000) governing facility siting and buffer zones, MassGIS parcel data, the Massachusetts Interactive Property Map (MassMapper), and municipal assessor databases across all 14 Massachusetts counties. Provide specific, actionable guidance. Cite actual zoning district names (e.g., Industrial A, Business C, Agricultural) where known. Always note with [VERIFY WITH MUNICIPALITY] where current bylaws must be confirmed directly with the host community.`;
+}
+
+/**
+ * Build user prompt for the parcel identification report.
+ */
+function buildParcelPrompt(licenseType, coopStructure, answers) {
+  const isCultivation = /cultivat|craft marijuana/i.test(licenseType);
+  const answersText = Object.entries(answers)
+    .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : v}`)
+    .join("\n");
+
+  return `
+License Type: ${licenseType}
+Cooperative Structure: ${coopStructure}
+Applicant Profile:
+${answersText}
+
+Provide a parcel identification report covering ALL of the following sections:
+
+## 1. Permitted Zoning Districts
+List the zoning district types (e.g., Industrial, Light Industrial, Business B, Agricultural) that typically permit ${licenseType} operations in Massachusetts, with notes specific to ${answers.location}.
+
+## 2. Minimum Lot & Building Size
+Based on a ${answers.capital} capital range, what minimum lot size (acres) and building square footage should this cooperative target? Provide a realistic range.
+${isCultivation ? `
+## 3. Canopy Sizing Estimate
+At the ${answers.capital} capital level with a ${coopStructure} model, estimate:
+- Realistic canopy square footage range
+- Total facility footprint needed to support that canopy
+- Tiered license class this canopy falls under (Tier 1–11 per 935 CMR 500.002)
+` : ""}
+## 4. Regulatory Setbacks & Buffers
+List required buffer distances from schools, daycares, playgrounds, and residential zones under Massachusetts law and typical municipal bylaws. Note any county-specific variations known for ${answers.location}.
+
+## 5. Cannabis-Friendly Municipalities
+Name 2–3 specific towns or cities within or near ${answers.location} that have established cannabis-friendly zoning or approved host community agreements, with a brief note on why each is favorable.
+
+## 6. How to Search for Parcels
+Step-by-step instructions for:
+- Using MassMapper (https://maps.mass.gov/massmapper/) to filter by zoning district and parcel size in ${answers.location}
+- Accessing the relevant county Registry of Deeds or municipal assessor database
+- Key search filters to apply (lot size, zoning code, use code)
+
+Mark any [VERIFY WITH MUNICIPALITY] notes where current bylaws must be confirmed directly.
+`.trim();
+}
+
+/**
  * Build prompt for the Executive Summary when called from the matcher flow.
  */
 function buildExecSummaryPrompt(licenseType, coopStructure, answers) {
@@ -322,6 +374,40 @@ Help them take this specific action. Provide concrete, practical guidance ground
 
         const reply = response.content.find((b) => b.type === "text")?.text ?? "";
         return json({ success: true, reply });
+      } catch (err) {
+        return json({ error: err.message ?? "Internal server error." }, 500);
+      }
+    }
+
+    /* ── POST /api/parcel → agentic parcel identification ── */
+    if (request.method === "POST" && path === "/api/parcel") {
+      if (!checkBearer(request, env)) {
+        if (!env.ADMIN_TOKEN) return json({ error: "ADMIN_TOKEN not configured." }, 500);
+        return json({ error: "Unauthorized." }, 401);
+      }
+      if (!env.ANTHROPIC_API_KEY) return json({ error: "ANTHROPIC_API_KEY not configured." }, 500);
+
+      let body;
+      try { body = await request.json(); } catch { return json({ error: "Invalid JSON body." }, 400); }
+
+      const { licenseType, coopStructure, answers } = body ?? {};
+      if (!licenseType || !coopStructure || !answers || typeof answers !== "object") {
+        return json({ error: "Missing required fields: licenseType, coopStructure, answers." }, 400);
+      }
+
+      try {
+        const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, dangerouslyAllowBrowser: true });
+        const response = await client.messages.create({
+          model: "claude-opus-4-8",
+          max_tokens: 8000,
+          system: buildParcelSystemPrompt(),
+          messages: [{ role: "user", content: buildParcelPrompt(licenseType, coopStructure, answers) }],
+        });
+
+        const report = response.content.find((b) => b.type === "text")?.text;
+        if (!report) return json({ error: "Claude returned an empty response." }, 502);
+
+        return json({ success: true, report });
       } catch (err) {
         return json({ error: err.message ?? "Internal server error." }, 500);
       }

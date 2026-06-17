@@ -871,6 +871,17 @@ export function renderAdmin(isError = false, isAuthed = false) {
               </div>
               <pre class="draft-output" id="exec-draft-\${idx}" style="display:block;margin-top:0"></pre>
             </div>
+            <button class="btn btn-sm" onclick="generateParcelReport(\${idx})" id="parcel-btn-\${idx}" style="margin-top:.5rem">
+              <span class="spinner" id="parcel-spin-\${idx}"></span>
+              <span id="parcel-label-\${idx}">Identify Parcels</span>
+            </button>
+            <div id="parcel-output-wrap-\${idx}" style="display:none">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.4rem;margin-top:.75rem">
+                <span style="font-size:.8rem;font-weight:600;color:var(--green-dark)">Parcel &amp; Zoning Report</span>
+                <button class="btn btn-sm btn-ghost" id="parcel-copy-\${idx}" onclick="copyParcelReport(\${idx})" style="font-size:.75rem;padding:.25rem .7rem">Copy</button>
+              </div>
+              <pre class="draft-output" id="parcel-draft-\${idx}" style="display:block;margin-top:0"></pre>
+            </div>
           </div>
         </div>
       \`).join('');
@@ -920,6 +931,51 @@ export function renderAdmin(isError = false, isAuthed = false) {
     window.copyExecSummary = async function(idx) {
       const text = document.getElementById('exec-draft-' + idx).textContent;
       const copyBtn = document.getElementById('exec-copy-' + idx);
+      await navigator.clipboard.writeText(text);
+      copyBtn.textContent = 'Copied!';
+      setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
+    };
+
+    window.generateParcelReport = async function(idx) {
+      const match = _matches[idx];
+      const btn   = document.getElementById('parcel-btn-' + idx);
+      const spin  = document.getElementById('parcel-spin-' + idx);
+      const lbl   = document.getElementById('parcel-label-' + idx);
+      const out   = document.getElementById('parcel-draft-' + idx);
+      const wrap  = document.getElementById('parcel-output-wrap-' + idx);
+
+      btn.disabled = true;
+      spin.style.display = 'inline-block';
+      lbl.textContent = 'Analyzing…';
+
+      try {
+        const res = await fetch('/api/parcel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + TOKEN },
+          body: JSON.stringify({
+            licenseType: match.licenseType,
+            coopStructure: match.coopStructure,
+            answers: answers
+          })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Unexpected error');
+        out.textContent = data.report;
+        wrap.style.display = 'block';
+        wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch (err) {
+        out.textContent = 'Error: ' + err.message;
+        wrap.style.display = 'block';
+      } finally {
+        btn.disabled = false;
+        spin.style.display = 'none';
+        lbl.textContent = 'Regenerate Parcel Report';
+      }
+    };
+
+    window.copyParcelReport = async function(idx) {
+      const text = document.getElementById('parcel-draft-' + idx).textContent;
+      const copyBtn = document.getElementById('parcel-copy-' + idx);
       await navigator.clipboard.writeText(text);
       copyBtn.textContent = 'Copied!';
       setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
