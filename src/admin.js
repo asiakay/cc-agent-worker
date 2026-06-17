@@ -1043,14 +1043,37 @@ export function renderAdmin(isError = false, isAuthed = false) {
     }
 
     function renderMarkdown(text) {
-      return text
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-        .replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1<\\/strong>')
+      // Escape HTML first
+      let s = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+      // Tables: detect blocks of lines that start and end with |
+      s = s.replace(/((?:^\\|.+\\|[ \\t]*\\n?)+)/gm, function(block) {
+        const lines = block.trim().split('\\n').map(l => l.trim()).filter(Boolean);
+        if (lines.length < 2) return block;
+        const isSep = l => /^[|\\-: ]+$/.test(l);
+        const sepIdx = lines.findIndex(isSep);
+        if (sepIdx < 0) return block;
+        const parseCells = l => l.replace(/^\\|/, '').replace(/\\|$/, '').split('|').map(c => c.trim());
+        let html = '<table style="border-collapse:collapse;font-size:.82rem;margin:.5rem 0;width:100%">';
+        lines.forEach((line, i) => {
+          if (isSep(line)) return;
+          const tag = i < sepIdx ? 'th' : 'td';
+          const style = tag === 'th'
+            ? 'background:var(--green-dark);color:#fff;padding:.3rem .6rem;text-align:left'
+            : 'border-bottom:1px solid var(--border);padding:.3rem .6rem';
+          html += '<tr>' + parseCells(line).map(c => \`<\${tag} style="\${style}">\${c}<\\/\${tag}>\`).join('') + '<\\/tr>';
+        });
+        html += '<\\/table>';
+        return html;
+      });
+
+      s = s.replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1<\\/strong>')
         .replace(/\\*(.+?)\\*/g, '<em>$1<\\/em>')
         .replace(/\x60([^\x60]+)\x60/g, '<code>$1<\\/code>')
         .replace(/^#{1,3} (.+)$/gm, '<strong>$1<\\/strong>')
         .replace(/^[-•] (.+)$/gm, '• $1')
         .replace(/\\n/g, '<br>');
+      return s;
     }
 
     function appendChatMsg(role, text) {
