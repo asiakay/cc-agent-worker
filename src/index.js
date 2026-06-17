@@ -256,15 +256,13 @@ Return ONLY the JSON array with no markdown fences, no commentary, no preamble.`
 
       try {
         const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
-        const stream = client.messages.stream({
+        const response = await client.messages.create({
           model: "claude-opus-4-8",
           max_tokens: 16000,
-          thinking: { type: "adaptive" },
           system: buildSystemInstruction(),
           messages: [{ role: "user", content: userPrompt }],
         });
 
-        const response = await stream.finalMessage();
         const generatedDraft = response.content.find((b) => b.type === "text")?.text;
 
         if (!generatedDraft) return json({ error: "Claude returned an empty response." }, 502);
@@ -305,15 +303,13 @@ Return ONLY the JSON array with no markdown fences, no commentary, no preamble.`
 
       try {
         const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
-        const stream = client.messages.stream({
+        const response = await client.messages.create({
           model: "claude-opus-4-8",
           max_tokens: 16000,
-          thinking: { type: "adaptive" },
           system: buildSystemInstruction(),
           messages: [{ role: "user", content: buildPrompt(sectionName, task) }],
         });
 
-        const response = await stream.finalMessage();
         const generatedDraft = response.content.find((b) => b.type === "text")?.text;
 
         if (!generatedDraft) return json({ error: "Claude returned an empty response." }, 502);

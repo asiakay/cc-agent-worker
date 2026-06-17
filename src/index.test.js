@@ -109,8 +109,7 @@ function options() {
 }
 
 beforeEach(() => {
-  mockStream.mockReturnValue(makeStreamHandle(makeFinalMessage()));
-  mockCreate.mockResolvedValue({ content: [{ type: "text", text: JSON.stringify(MOCK_MATCHES) }] });
+  mockCreate.mockResolvedValue({ content: [{ type: "text", text: MOCK_DRAFT }] });
 });
 
 afterEach(() => {
@@ -350,6 +349,10 @@ describe("POST /api/logout", () => {
 // Auth: /api/match — demo token unlocks endpoint
 // ---------------------------------------------------------------------------
 describe("POST /api/match — auth", () => {
+  beforeEach(() => {
+    mockCreate.mockResolvedValue({ content: [{ type: "text", text: JSON.stringify(MOCK_MATCHES) }] });
+  });
+
   it("allows demo token when ADMIN_TOKEN is not set", async () => {
     const res = await worker.fetch(
       demoPost({ answers: { experience: "5 years" } }, "/api/match"),
@@ -436,6 +439,10 @@ describe("POST /api/draft — auth", () => {
 // POST /api/match — happy path
 // ---------------------------------------------------------------------------
 describe("POST /api/match — happy path", () => {
+  beforeEach(() => {
+    mockCreate.mockResolvedValue({ content: [{ type: "text", text: JSON.stringify(MOCK_MATCHES) }] });
+  });
+
   it("returns 200 with ranked matches", async () => {
     const res = await worker.fetch(
       authedPost({ answers: { experience: "5 years", capital: "200k" } }, "/api/match"),
@@ -585,7 +592,7 @@ describe("POST /api/draft — happy path", () => {
       authedPost({ sectionName: "Staffing Plan", task: "background checks" }, "/api/draft"),
       env
     );
-    expect(mockStream.mock.calls[0][0].model).toBe("claude-opus-4-8");
+    expect(mockCreate.mock.calls[0][0].model).toBe("claude-opus-4-8");
   });
 
   it("embeds sectionName and task in the generation prompt", async () => {
@@ -594,7 +601,7 @@ describe("POST /api/draft — happy path", () => {
       authedPost({ sectionName: "Waste Management", task: "compostable organics" }, "/api/draft"),
       env
     );
-    const prompt = mockStream.mock.calls[0][0].messages[0].content;
+    const prompt = mockCreate.mock.calls[0][0].messages[0].content;
     expect(prompt).toContain("Waste Management");
     expect(prompt).toContain("compostable organics");
   });
@@ -613,7 +620,7 @@ describe("POST /api/draft — happy path", () => {
       ),
       env
     );
-    const prompt = mockStream.mock.calls[0][0].messages[0].content;
+    const prompt = mockCreate.mock.calls[0][0].messages[0].content;
     expect(prompt).toContain("Adult-Use Cultivator");
     expect(prompt).toContain("Worker Cooperative");
   });
@@ -626,14 +633,13 @@ describe("POST /api/draft — happy path", () => {
     expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
   });
 
-  it("includes max_tokens and thinking config", async () => {
+  it("includes max_tokens in config", async () => {
     await worker.fetch(
       authedPost({ sectionName: "Transport Plan", task: "GPS tracking" }, "/api/draft"),
       makeEnv()
     );
-    const cfg = mockStream.mock.calls[0][0];
+    const cfg = mockCreate.mock.calls[0][0];
     expect(cfg.max_tokens).toBeGreaterThan(0);
-    expect(cfg.thinking).toEqual({ type: "adaptive" });
   });
 
   it("returns 400 when sectionName is missing", async () => {
@@ -673,9 +679,7 @@ describe("POST /api/draft — happy path", () => {
   });
 
   it("returns 502 when Claude returns empty text", async () => {
-    mockStream.mockReturnValueOnce(
-      makeStreamHandle({ content: [{ type: "text", text: "" }], stop_reason: "end_turn" })
-    );
+    mockCreate.mockResolvedValueOnce({ content: [{ type: "text", text: "" }] });
     const res = await worker.fetch(
       authedPost({ sectionName: "Section B", task: "task B" }, "/api/draft"),
       makeEnv()
@@ -686,9 +690,7 @@ describe("POST /api/draft — happy path", () => {
   });
 
   it("returns 500 when SDK throws", async () => {
-    mockStream.mockReturnValueOnce({
-      finalMessage: vi.fn().mockRejectedValueOnce(new Error("Quota exceeded")),
-    });
+    mockCreate.mockRejectedValueOnce(new Error("Quota exceeded"));
     const res = await worker.fetch(
       authedPost({ sectionName: "Section C", task: "task C" }, "/api/draft"),
       makeEnv()
@@ -792,7 +794,7 @@ describe("POST / — legacy draft endpoint", () => {
       post({ sectionName: "Staffing Plan", task: "background checks" }),
       makeEnv()
     );
-    expect(mockStream.mock.calls[0][0].model).toBe("claude-opus-4-8");
+    expect(mockCreate.mock.calls[0][0].model).toBe("claude-opus-4-8");
   });
 
   it("embeds sectionName and task in the generation prompt", async () => {
@@ -800,19 +802,18 @@ describe("POST / — legacy draft endpoint", () => {
       post({ sectionName: "Waste Management", task: "compostable organic waste" }),
       makeEnv()
     );
-    const prompt = mockStream.mock.calls[0][0].messages[0].content;
+    const prompt = mockCreate.mock.calls[0][0].messages[0].content;
     expect(prompt).toContain("Waste Management");
     expect(prompt).toContain("compostable organic waste");
   });
 
-  it("includes max_tokens and thinking in config", async () => {
+  it("includes max_tokens in config", async () => {
     await worker.fetch(
       post({ sectionName: "Transport Plan", task: "GPS tracking" }),
       makeEnv()
     );
-    const cfg = mockStream.mock.calls[0][0];
+    const cfg = mockCreate.mock.calls[0][0];
     expect(cfg.max_tokens).toBeGreaterThan(0);
-    expect(cfg.thinking).toEqual({ type: "adaptive" });
   });
 
   it("sets CORS headers on 200 response", async () => {
@@ -821,9 +822,7 @@ describe("POST / — legacy draft endpoint", () => {
   });
 
   it("returns 502 when Claude returns empty text", async () => {
-    mockStream.mockReturnValueOnce(
-      makeStreamHandle({ content: [{ type: "text", text: "" }], stop_reason: "end_turn" })
-    );
+    mockCreate.mockResolvedValueOnce({ content: [{ type: "text", text: "" }] });
     const res = await worker.fetch(
       post({ sectionName: "Section B", task: "task B" }),
       makeEnv()
@@ -834,9 +833,7 @@ describe("POST / — legacy draft endpoint", () => {
   });
 
   it("returns 500 when SDK throws", async () => {
-    mockStream.mockReturnValueOnce({
-      finalMessage: vi.fn().mockRejectedValueOnce(new Error("Quota exceeded")),
-    });
+    mockCreate.mockRejectedValueOnce(new Error("Quota exceeded"));
     const res = await worker.fetch(
       post({ sectionName: "Section C", task: "task C" }),
       makeEnv()
@@ -847,9 +844,7 @@ describe("POST / — legacy draft endpoint", () => {
   });
 
   it("returns 500 with generic message when SDK throws without message", async () => {
-    mockStream.mockReturnValueOnce({
-      finalMessage: vi.fn().mockRejectedValueOnce({}),
-    });
+    mockCreate.mockRejectedValueOnce({});
     const res = await worker.fetch(
       post({ sectionName: "Section D", task: "task D" }),
       makeEnv()
