@@ -36,6 +36,8 @@ const BASE_STYLES = `
   .nav-brand span { color: var(--green-pale); }
   .nav-back { color: var(--green-pale); font-size: .8rem; text-decoration: none; margin-left: auto; }
   .nav-back:hover { text-decoration: underline; }
+  .nav-logout { background: none; border: 1px solid rgba(255,255,255,.35); color: var(--green-pale); font-size: .8rem; border-radius: 6px; padding: .3rem .75rem; cursor: pointer; transition: background .15s; }
+  .nav-logout:hover { background: rgba(255,255,255,.12); }
 
   /* TABS */
   .tab-bar {
@@ -501,6 +503,9 @@ export function renderAdmin(isError = false, isAuthed = false) {
   <nav>
     <div class="nav-brand">CCC<span>Assist</span> <span style="font-weight:300;opacity:.6">/ Admin</span></div>
     <a href="/" class="nav-back">&larr; Public site</a>
+    <form method="POST" action="/api/logout" style="margin-left:.75rem">
+      <button type="submit" class="nav-logout">Sign out</button>
+    </form>
   </nav>
 
   <div class="tab-bar">

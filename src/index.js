@@ -153,6 +153,17 @@ export default {
       return json({ error: "Invalid token." }, 401);
     }
 
+    /* ── POST /api/logout → clear session cookie and redirect ── */
+    if (request.method === "POST" && path === "/api/logout") {
+      return new Response(null, {
+        status: 302,
+        headers: {
+          Location: "/admin",
+          "Set-Cookie": "admin_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0",
+        },
+      });
+    }
+
     /* ── POST /api/match → cooperative matcher ── */
     if (request.method === "POST" && path === "/api/match") {
       if (!checkBearer(request, env)) {
