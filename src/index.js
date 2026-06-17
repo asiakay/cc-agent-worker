@@ -150,7 +150,6 @@ export default {
           },
         });
       }
-      if (!env.ADMIN_TOKEN) return json({ error: "ADMIN_TOKEN not configured." }, 500);
       return json({ error: "Invalid token." }, 401);
     }
 
