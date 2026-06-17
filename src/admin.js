@@ -294,7 +294,12 @@ const BASE_STYLES = `
     line-height: 1.55;
     max-width: 85%;
     padding: .55rem .8rem;
-    white-space: pre-wrap;
+  }
+  .chat-msg code {
+    background: rgba(0,0,0,.08);
+    border-radius: 3px;
+    font-size: .8rem;
+    padding: .1em .3em;
   }
   .chat-msg.user { align-self: flex-end; background: var(--green-dark); color: #fff; }
   .chat-msg.assistant { align-self: flex-start; background: var(--off-white); border: 1px solid var(--border); color: var(--text); }
@@ -1037,10 +1042,25 @@ export function renderAdmin(isError = false, isAuthed = false) {
       }
     }
 
+    function renderMarkdown(text) {
+      return text
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1<\\/strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1<\\/em>')
+        .replace(/\x60([^\x60]+)\x60/g, '<code>$1<\\/code>')
+        .replace(/^#{1,3} (.+)$/gm, '<strong>$1<\\/strong>')
+        .replace(/^[-•] (.+)$/gm, '• $1')
+        .replace(/\n/g, '<br>');
+    }
+
     function appendChatMsg(role, text) {
       const el = document.createElement('div');
       el.className = 'chat-msg ' + role;
-      el.textContent = text;
+      if (role === 'assistant') {
+        el.innerHTML = renderMarkdown(text);
+      } else {
+        el.textContent = text;
+      }
       chatMessages.appendChild(el);
       chatMessages.scrollTop = chatMessages.scrollHeight;
       return el;
