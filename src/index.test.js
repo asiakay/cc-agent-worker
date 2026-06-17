@@ -323,6 +323,30 @@ describe("GET /admin", () => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/logout
+// ---------------------------------------------------------------------------
+describe("POST /api/logout", () => {
+  it("redirects to /admin", async () => {
+    const res = await worker.fetch(
+      new Request("https://worker.example/api/logout", { method: "POST" }),
+      makeEnv()
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/admin");
+  });
+
+  it("expires the session cookie", async () => {
+    const res = await worker.fetch(
+      new Request("https://worker.example/api/logout", { method: "POST" }),
+      makeEnv()
+    );
+    const cookie = res.headers.get("Set-Cookie") ?? "";
+    expect(cookie).toContain("admin_session=;");
+    expect(cookie).toContain("Max-Age=0");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Auth: /api/match — demo token unlocks endpoint
 // ---------------------------------------------------------------------------
 describe("POST /api/match — auth", () => {
