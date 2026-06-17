@@ -285,6 +285,48 @@ Return ONLY the JSON array with no markdown fences, no commentary, no preamble.`
       }
     }
 
+    /* ── POST /api/chat → next-step recommendation chatbot ── */
+    if (request.method === "POST" && path === "/api/chat") {
+      if (!checkBearer(request, env)) {
+        if (!env.ADMIN_TOKEN) return json({ error: "ADMIN_TOKEN not configured." }, 500);
+        return json({ error: "Unauthorized." }, 401);
+      }
+      if (!env.ANTHROPIC_API_KEY) return json({ error: "ANTHROPIC_API_KEY not configured." }, 500);
+
+      let body;
+      try { body = await request.json(); } catch { return json({ error: "Invalid JSON body." }, 400); }
+
+      const { step, matchContext, messages } = body ?? {};
+      if (!step || typeof step !== "string") return json({ error: "Missing required field: step." }, 400);
+      if (!Array.isArray(messages)) return json({ error: "Missing required field: messages." }, 400);
+
+      const contextBlurb = matchContext
+        ? `License type: ${matchContext.licenseType}\nCooperative structure: ${matchContext.coopStructure}\nFit score: ${matchContext.fitScore}\nRationale: ${matchContext.rationale}`
+        : "";
+
+      const systemPrompt = `You are a Massachusetts cannabis cooperative licensing advisor. The applicant is working through a recommended next step from their license-match results.
+
+Recommended next step they clicked: "${step}"
+${contextBlurb}
+
+Help them take this specific action. Provide concrete, practical guidance grounded in Massachusetts CCC regulations (935 CMR 500.000) and cooperative law (M.G.L. c. 157). Keep replies concise and actionable. When relevant, point to specific forms, agencies, or deadlines.`;
+
+      try {
+        const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, dangerouslyAllowBrowser: true });
+        const response = await client.messages.create({
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 1024,
+          system: systemPrompt,
+          messages,
+        });
+
+        const reply = response.content.find((b) => b.type === "text")?.text ?? "";
+        return json({ success: true, reply });
+      } catch (err) {
+        return json({ error: err.message ?? "Internal server error." }, 500);
+      }
+    }
+
     /* ── POST / → legacy draft endpoint (backward compat) ── */
     if (request.method === "POST" && path === "/") {
       if (!env.ANTHROPIC_API_KEY) {

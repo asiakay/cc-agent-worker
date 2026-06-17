@@ -214,15 +214,108 @@ const BASE_STYLES = `
   .next-steps li {
     font-size: .85rem;
     color: var(--text);
-    padding: .3rem 0 .3rem 1.2rem;
-    position: relative;
+    padding: .3rem 0 .3rem 0;
     line-height: 1.4;
   }
-  .next-steps li::before {
+  .next-step-btn {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: .85rem;
+    line-height: 1.4;
+    padding: .35rem .6rem .35rem 1.4rem;
+    position: relative;
+    text-align: left;
+    width: 100%;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .next-step-btn::before {
     content: '›';
-    position: absolute; left: 0;
+    position: absolute; left: .5rem;
     color: var(--green-mid);
     font-weight: 700;
+  }
+  .next-step-btn:hover { border-color: var(--green-mid); background: rgba(0,128,64,.05); }
+
+  /* Chat panel */
+  #step-chat-overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,.35);
+    z-index: 1000;
+    align-items: flex-end;
+    justify-content: center;
+  }
+  #step-chat-overlay.open { display: flex; }
+  #step-chat-panel {
+    background: var(--white);
+    border-radius: var(--radius) var(--radius) 0 0;
+    box-shadow: 0 -4px 24px rgba(0,0,0,.15);
+    display: flex;
+    flex-direction: column;
+    height: 70vh;
+    max-width: 640px;
+    width: 100%;
+  }
+  #step-chat-header {
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: .75rem;
+    justify-content: space-between;
+    padding: .85rem 1rem;
+  }
+  #step-chat-title {
+    font-size: .88rem;
+    font-weight: 600;
+    color: var(--text);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #step-chat-close {
+    background: none; border: none; cursor: pointer;
+    color: var(--text-muted); font-size: 1.2rem; line-height: 1; padding: 0;
+  }
+  #step-chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: .75rem;
+  }
+  .chat-msg {
+    border-radius: var(--radius);
+    font-size: .85rem;
+    line-height: 1.55;
+    max-width: 85%;
+    padding: .55rem .8rem;
+    white-space: pre-wrap;
+  }
+  .chat-msg.user { align-self: flex-end; background: var(--green-dark); color: #fff; }
+  .chat-msg.assistant { align-self: flex-start; background: var(--off-white); border: 1px solid var(--border); color: var(--text); }
+  #step-chat-form {
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: .5rem;
+    padding: .75rem 1rem;
+  }
+  #step-chat-input {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    flex: 1;
+    font-size: .88rem;
+    padding: .45rem .7rem;
+    outline: none;
+    resize: none;
+  }
+  #step-chat-input:focus { border-color: var(--green-mid); }
+  #step-chat-send {
+    align-self: flex-end;
   }
   .draft-output {
     background: var(--off-white);
@@ -568,6 +661,21 @@ export function renderAdmin(isError = false, isAuthed = false) {
 
   <footer>CCC License Application Assistant &mdash; For internal use only. Always verify regulatory citations before submission.</footer>
 
+  <!-- Step chatbot panel -->
+  <div id="step-chat-overlay">
+    <div id="step-chat-panel">
+      <div id="step-chat-header">
+        <span id="step-chat-title"></span>
+        <button id="step-chat-close" aria-label="Close">&times;</button>
+      </div>
+      <div id="step-chat-messages"></div>
+      <form id="step-chat-form">
+        <textarea id="step-chat-input" rows="2" placeholder="Ask a follow-up question…"></textarea>
+        <button id="step-chat-send" class="btn btn-sm" type="submit">Send</button>
+      </form>
+    </div>
+  </div>
+
   <script>
     /* ── AUTH TOKEN ── */
     const TOKEN = sessionStorage.getItem('admin_token') || '';
@@ -746,7 +854,7 @@ export function renderAdmin(isError = false, isAuthed = false) {
             </div>
             <div class="match-section">
               <div class="match-label">Recommended next steps</div>
-              <ul class="next-steps">\${m.nextSteps.map(s => \`<li>\${s}</li>\`).join('')}</ul>
+              <ul class="next-steps">\${m.nextSteps.map(s => \`<li><button class="next-step-btn" onclick="openStepChat(\${JSON.stringify(s)}, \${JSON.stringify({licenseType:m.licenseType,coopStructure:m.coopStructure,fitScore:m.fitScore,rationale:m.rationale})})">\${s}</button></li>\`).join('')}</ul>
             </div>
             <button class="btn btn-sm" onclick="generateExecSummary(\${idx})" id="exec-btn-\${idx}">
               <span class="spinner" id="exec-spin-\${idx}"></span>
@@ -871,6 +979,86 @@ export function renderAdmin(isError = false, isAuthed = false) {
 
     /* ── init ── */
     renderQuestion();
+
+    /* ── Step chatbot ── */
+    let chatStep = null;
+    let chatMatchCtx = null;
+    let chatHistory = [];
+
+    const overlay = document.getElementById('step-chat-overlay');
+    const chatTitle = document.getElementById('step-chat-title');
+    const chatMessages = document.getElementById('step-chat-messages');
+    const chatInput = document.getElementById('step-chat-input');
+    const chatSend = document.getElementById('step-chat-send');
+
+    window.openStepChat = function(step, matchCtx) {
+      chatStep = step;
+      chatMatchCtx = matchCtx;
+      chatHistory = [];
+      chatTitle.textContent = step;
+      chatMessages.innerHTML = '';
+      overlay.classList.add('open');
+      chatInput.focus();
+      sendChatMessage('Tell me how to complete this step with specific actions, deadlines, and any relevant Massachusetts forms or agencies.');
+    };
+
+    document.getElementById('step-chat-close').addEventListener('click', () => {
+      overlay.classList.remove('open');
+    });
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.classList.remove('open');
+    });
+
+    async function sendChatMessage(userText) {
+      appendChatMsg('user', userText);
+      chatHistory.push({ role: 'user', content: userText });
+      chatSend.disabled = true;
+      const thinking = appendChatMsg('assistant', '…');
+
+      try {
+        const token = sessionStorage.getItem('admin_token') || '';
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+          body: JSON.stringify({ step: chatStep, matchContext: chatMatchCtx, messages: chatHistory }),
+        });
+        const data = await res.json();
+        thinking.remove();
+        if (!res.ok) throw new Error(data.error || 'Request failed');
+        appendChatMsg('assistant', data.reply);
+        chatHistory.push({ role: 'assistant', content: data.reply });
+      } catch (err) {
+        thinking.remove();
+        appendChatMsg('assistant', 'Error: ' + err.message);
+      } finally {
+        chatSend.disabled = false;
+        chatInput.focus();
+      }
+    }
+
+    function appendChatMsg(role, text) {
+      const el = document.createElement('div');
+      el.className = 'chat-msg ' + role;
+      el.textContent = text;
+      chatMessages.appendChild(el);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+      return el;
+    }
+
+    document.getElementById('step-chat-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const text = chatInput.value.trim();
+      if (!text) return;
+      chatInput.value = '';
+      sendChatMessage(text);
+    });
+
+    chatInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        document.getElementById('step-chat-form').requestSubmit();
+      }
+    });
   </script>
 </body>
 </html>`;
