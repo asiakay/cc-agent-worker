@@ -424,6 +424,14 @@ describe("POST /api/match — happy path", () => {
     expect(body.matches).toHaveLength(3);
   });
 
+  it("uses claude-haiku-4-5-20251001 for fast turnaround", async () => {
+    await worker.fetch(
+      authedPost({ answers: { experience: "5 years" } }, "/api/match"),
+      makeEnv()
+    );
+    expect(mockCreate.mock.calls[0][0].model).toBe("claude-haiku-4-5-20251001");
+  });
+
   it("returns matches with required fields", async () => {
     const res = await worker.fetch(
       authedPost({ answers: { experience: "5 years" } }, "/api/match"),

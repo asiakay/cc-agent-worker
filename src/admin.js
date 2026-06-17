@@ -681,9 +681,25 @@ export function renderAdmin(isError = false, isAuthed = false) {
 
     async function runMatcher() {
       nextBtn.disabled = true;
-      nextBtn.innerHTML = '<span class="spinner" style="display:inline-block;border-top-color:#fff;border-color:rgba(255,255,255,.3)"></span> Analyzing…';
       matchRes.style.display = 'none';
       matchErr.style.display = 'none';
+
+      const steps = [
+        'Reviewing your profile…',
+        'Matching license types…',
+        'Scoring cooperative structures…',
+        'Checking equity pathways…',
+        'Ranking recommendations…',
+      ];
+      let stepIdx = 0;
+      function setStep(i) {
+        nextBtn.innerHTML = \`<span class="spinner" style="display:inline-block;border-top-color:#fff;border-color:rgba(255,255,255,.3)"></span> \${steps[i]}\`;
+      }
+      setStep(0);
+      const ticker = setInterval(() => {
+        stepIdx = Math.min(stepIdx + 1, steps.length - 1);
+        setStep(stepIdx);
+      }, 1200);
 
       try {
         const res = await fetch('/api/match', {
@@ -698,6 +714,7 @@ export function renderAdmin(isError = false, isAuthed = false) {
         matchErr.textContent = err.message;
         matchErr.style.display = 'block';
       } finally {
+        clearInterval(ticker);
         nextBtn.disabled = false;
         nextBtn.textContent = 'Find My Matches';
       }
