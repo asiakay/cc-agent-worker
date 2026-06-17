@@ -204,7 +204,7 @@ Return ONLY the JSON array with no markdown fences, no commentary, no preamble.`
       const userPrompt = `Applicant profile:\n${answersText}\n\nReturn the 3 best license + cooperative structure matches as a JSON array.`;
 
       try {
-        const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+        const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, dangerouslyAllowBrowser: true });
         const response = await client.messages.create({
           model: "claude-haiku-4-5-20251001",
           max_tokens: 2048,
@@ -257,7 +257,7 @@ Return ONLY the JSON array with no markdown fences, no commentary, no preamble.`
       }
 
       try {
-        const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+        const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, dangerouslyAllowBrowser: true });
         const response = await client.messages.create({
           model: "claude-opus-4-8",
           max_tokens: 16000,
@@ -304,7 +304,7 @@ Return ONLY the JSON array with no markdown fences, no commentary, no preamble.`
       }
 
       try {
-        const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+        const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, dangerouslyAllowBrowser: true });
         const response = await client.messages.create({
           model: "claude-opus-4-8",
           max_tokens: 16000,
