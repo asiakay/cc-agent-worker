@@ -30,12 +30,27 @@ function text(body, status = 200) {
 /* ── Auth helper ── */
 const DEMO_TOKEN = "demo";
 
+function isValidToken(token, env) {
+  if (!token) return false;
+  if (token === DEMO_TOKEN) return true;
+  if (env.ADMIN_TOKEN && token === env.ADMIN_TOKEN) return true;
+  return false;
+}
+
 function checkBearer(request, env) {
   const auth = request.headers.get("Authorization") ?? "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-  if (env.ADMIN_TOKEN && token === env.ADMIN_TOKEN) return true;
-  if (token === DEMO_TOKEN) return true;
-  return false;
+  return isValidToken(token, env);
+}
+
+function getSessionCookie(request) {
+  const cookie = request.headers.get("Cookie") ?? "";
+  const match = cookie.match(/(?:^|;\s*)admin_session=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
+function sessionCookieHeader(token) {
+  return `admin_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800`;
 }
 
 /**
@@ -115,16 +130,26 @@ export default {
 
     /* ── GET /admin → protected dashboard ── */
     if (request.method === "GET" && path === "/admin") {
-      const storedToken = url.searchParams.get("token");
       const hasError = url.searchParams.get("error") === "1";
-      // Token in query string is only used for testing; real auth is Bearer via JS.
-      // We render the gate; the JS client validates via /api/auth and uses sessionStorage.
-      return html(renderAdmin(hasError, false));
+      const sessionToken = getSessionCookie(request);
+      const isAuthed = isValidToken(sessionToken, env);
+      return html(renderAdmin(hasError, isAuthed));
     }
 
     /* ── POST /api/auth → token verification ping ── */
     if (request.method === "POST" && path === "/api/auth") {
-      if (checkBearer(request, env)) return json({ ok: true });
+      const auth = request.headers.get("Authorization") ?? "";
+      const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+      if (isValidToken(token, env)) {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+            "Set-Cookie": sessionCookieHeader(token),
+            ...CORS_HEADERS,
+          },
+        });
+      }
       if (!env.ADMIN_TOKEN) return json({ error: "ADMIN_TOKEN not configured." }, 500);
       return json({ error: "Invalid token." }, 401);
     }
