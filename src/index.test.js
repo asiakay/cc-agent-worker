@@ -711,9 +711,27 @@ describe("POST /api/draft — happy path", () => {
 // POST / — legacy endpoint (backward compat, no auth)
 // ---------------------------------------------------------------------------
 describe("POST / — legacy draft endpoint", () => {
+  it("returns 401 when no auth provided", async () => {
+    const res = await worker.fetch(
+      post({ sectionName: "Section 1", task: "plan" }),
+      makeEnv()
+    );
+    expect(res.status).toBe(401);
+    const body = await res.json();
+    expect(body.error).toMatch(/unauthorized/i);
+  });
+
+  it("returns 401 when wrong bearer token provided", async () => {
+    const res = await worker.fetch(
+      authedPost({ sectionName: "Section 1", task: "plan" }, "/", "wrong-token"),
+      makeEnv()
+    );
+    expect(res.status).toBe(401);
+  });
+
   it("returns 200 with draft content", async () => {
     const res = await worker.fetch(
-      post({ sectionName: "Environmental Plan - Section 3.2", task: "LED plan" }),
+      authedPost({ sectionName: "Environmental Plan - Section 3.2", task: "LED plan" }),
       makeEnv()
     );
     expect(res.status).toBe(200);
@@ -726,7 +744,7 @@ describe("POST / — legacy draft endpoint", () => {
   it("saves draft to KV and reports savedToKV: true", async () => {
     const env = makeEnv();
     const res = await worker.fetch(
-      post({ sectionName: "Security Plan", task: "24/7 camera coverage" }),
+      authedPost({ sectionName: "Security Plan", task: "24/7 camera coverage" }),
       env
     );
     const body = await res.json();
@@ -742,7 +760,7 @@ describe("POST / — legacy draft endpoint", () => {
 
   it("reports savedToKV: false when KV binding is absent", async () => {
     const res = await worker.fetch(
-      post({ sectionName: "Inventory Plan", task: "seed-to-sale tracking" }),
+      authedPost({ sectionName: "Inventory Plan", task: "seed-to-sale tracking" }),
       makeEnv({ APPLICATION_DRAFTS: undefined })
     );
     const body = await res.json();
@@ -752,7 +770,7 @@ describe("POST / — legacy draft endpoint", () => {
   it("returns 400 for non-JSON body", async () => {
     const req = new Request("https://worker.example/", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Authorization: "Bearer secret-admin" },
       body: "not json",
     });
     const res = await worker.fetch(req, makeEnv());
@@ -762,32 +780,32 @@ describe("POST / — legacy draft endpoint", () => {
   });
 
   it("returns 400 when sectionName is missing", async () => {
-    const res = await worker.fetch(post({ task: "some task" }), makeEnv());
+    const res = await worker.fetch(authedPost({ task: "some task" }), makeEnv());
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toMatch(/sectionName/i);
   });
 
   it("returns 400 when task is missing", async () => {
-    const res = await worker.fetch(post({ sectionName: "Environmental Plan" }), makeEnv());
+    const res = await worker.fetch(authedPost({ sectionName: "Environmental Plan" }), makeEnv());
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toMatch(/task/i);
   });
 
   it("returns 400 when sectionName is blank whitespace", async () => {
-    const res = await worker.fetch(post({ sectionName: "   ", task: "something" }), makeEnv());
+    const res = await worker.fetch(authedPost({ sectionName: "   ", task: "something" }), makeEnv());
     expect(res.status).toBe(400);
   });
 
   it("returns 400 when task is blank whitespace", async () => {
-    const res = await worker.fetch(post({ sectionName: "Section 1", task: "   " }), makeEnv());
+    const res = await worker.fetch(authedPost({ sectionName: "Section 1", task: "   " }), makeEnv());
     expect(res.status).toBe(400);
   });
 
   it("returns 500 when ANTHROPIC_API_KEY is not set", async () => {
     const res = await worker.fetch(
-      post({ sectionName: "Section 1", task: "plan" }),
+      authedPost({ sectionName: "Section 1", task: "plan" }),
       makeEnv({ ANTHROPIC_API_KEY: undefined })
     );
     expect(res.status).toBe(500);
@@ -797,7 +815,7 @@ describe("POST / — legacy draft endpoint", () => {
 
   it("passes the correct model to the SDK", async () => {
     await worker.fetch(
-      post({ sectionName: "Staffing Plan", task: "background checks" }),
+      authedPost({ sectionName: "Staffing Plan", task: "background checks" }),
       makeEnv()
     );
     expect(mockCreate.mock.calls[0][0].model).toBe("claude-opus-4-8");
@@ -805,7 +823,7 @@ describe("POST / — legacy draft endpoint", () => {
 
   it("embeds sectionName and task in the generation prompt", async () => {
     await worker.fetch(
-      post({ sectionName: "Waste Management", task: "compostable organic waste" }),
+      authedPost({ sectionName: "Waste Management", task: "compostable organic waste" }),
       makeEnv()
     );
     const prompt = mockCreate.mock.calls[0][0].messages[0].content;
@@ -815,7 +833,7 @@ describe("POST / — legacy draft endpoint", () => {
 
   it("includes max_tokens in config", async () => {
     await worker.fetch(
-      post({ sectionName: "Transport Plan", task: "GPS tracking" }),
+      authedPost({ sectionName: "Transport Plan", task: "GPS tracking" }),
       makeEnv()
     );
     const cfg = mockCreate.mock.calls[0][0];
@@ -823,14 +841,14 @@ describe("POST / — legacy draft endpoint", () => {
   });
 
   it("sets CORS headers on 200 response", async () => {
-    const res = await worker.fetch(post({ sectionName: "Section A", task: "task A" }), makeEnv());
+    const res = await worker.fetch(authedPost({ sectionName: "Section A", task: "task A" }), makeEnv());
     expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
   });
 
   it("returns 502 when Claude returns empty text", async () => {
     mockCreate.mockResolvedValueOnce({ content: [{ type: "text", text: "" }] });
     const res = await worker.fetch(
-      post({ sectionName: "Section B", task: "task B" }),
+      authedPost({ sectionName: "Section B", task: "task B" }),
       makeEnv()
     );
     expect(res.status).toBe(502);
@@ -841,7 +859,7 @@ describe("POST / — legacy draft endpoint", () => {
   it("returns 500 when SDK throws", async () => {
     mockCreate.mockRejectedValueOnce(new Error("Quota exceeded"));
     const res = await worker.fetch(
-      post({ sectionName: "Section C", task: "task C" }),
+      authedPost({ sectionName: "Section C", task: "task C" }),
       makeEnv()
     );
     expect(res.status).toBe(500);
@@ -852,7 +870,7 @@ describe("POST / — legacy draft endpoint", () => {
   it("returns 500 with generic message when SDK throws without message", async () => {
     mockCreate.mockRejectedValueOnce({});
     const res = await worker.fetch(
-      post({ sectionName: "Section D", task: "task D" }),
+      authedPost({ sectionName: "Section D", task: "task D" }),
       makeEnv()
     );
     expect(res.status).toBe(500);

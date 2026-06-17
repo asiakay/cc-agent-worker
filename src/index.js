@@ -477,6 +477,10 @@ Help them take this specific action. Provide concrete, practical guidance ground
 
     /* ── POST / → legacy draft endpoint (backward compat) ── */
     if (request.method === "POST" && path === "/") {
+      if (!await checkBearer(request, env)) {
+        if (!env.ADMIN_TOKEN) return json({ error: "ADMIN_TOKEN not configured." }, 500);
+        return json({ error: "Unauthorized." }, 401);
+      }
       if (!env.ANTHROPIC_API_KEY) {
         return json({ error: "ANTHROPIC_API_KEY secret is not configured on this Worker." }, 500);
       }
