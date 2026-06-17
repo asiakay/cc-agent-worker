@@ -1045,12 +1045,12 @@ export function renderAdmin(isError = false, isAuthed = false) {
     function renderMarkdown(text) {
       return text
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1<\\/strong>')
-        .replace(/\*(.+?)\*/g, '<em>$1<\\/em>')
+        .replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1<\\/strong>')
+        .replace(/\\*(.+?)\\*/g, '<em>$1<\\/em>')
         .replace(/\x60([^\x60]+)\x60/g, '<code>$1<\\/code>')
         .replace(/^#{1,3} (.+)$/gm, '<strong>$1<\\/strong>')
         .replace(/^[-•] (.+)$/gm, '• $1')
-        .replace(/\n/g, '<br>');
+        .replace(/\\n/g, '<br>');
     }
 
     function appendChatMsg(role, text) {
