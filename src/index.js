@@ -31,7 +31,9 @@ function text(body, status = 200) {
 function checkBearer(request, env) {
   const auth = request.headers.get("Authorization") ?? "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-  return env.ADMIN_TOKEN && token === env.ADMIN_TOKEN;
+  if (env.ADMIN_TOKEN && token === env.ADMIN_TOKEN) return true;
+  if (env.DEMO_TOKEN && token === env.DEMO_TOKEN) return true;
+  return false;
 }
 
 /**
@@ -120,7 +122,7 @@ export default {
 
     /* ── POST /api/auth → token verification ping ── */
     if (request.method === "POST" && path === "/api/auth") {
-      if (!env.ADMIN_TOKEN) return json({ error: "ADMIN_TOKEN not configured." }, 500);
+      if (!env.ADMIN_TOKEN && !env.DEMO_TOKEN) return json({ error: "ADMIN_TOKEN not configured." }, 500);
       if (checkBearer(request, env)) return json({ ok: true });
       return json({ error: "Invalid token." }, 401);
     }

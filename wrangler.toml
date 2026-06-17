@@ -7,6 +7,11 @@ compatibility_date = "2024-09-23"
 #   npx wrangler secret put GEMINI_API_KEY
 # Then paste your key when prompted. Wrangler encrypts it and injects it as
 # env.GEMINI_API_KEY at runtime.
+#
+# To enable the "Enter as demo user" button, set a demo token:
+#   npx wrangler secret put DEMO_TOKEN
+# Use any short string (e.g. "demo"). The login page sends this value
+# automatically when the button is clicked. Omit DEMO_TOKEN to disable demo access.
 
 # ─── KV Namespace ─────────────────────────────────────────────────────────────
 # Create with: npx wrangler kv:namespace create APPLICATION_DRAFTS

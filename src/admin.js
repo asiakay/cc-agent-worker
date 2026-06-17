@@ -312,6 +312,10 @@ function renderLoginGate(error = false) {
     }
     .login-card h1 { font-size: 1.25rem; color: var(--green-dark); margin-bottom: .35rem; }
     .login-card p { font-size: .85rem; color: var(--muted); margin-bottom: 1.5rem; }
+    .divider { display: flex; align-items: center; gap: .75rem; margin: 1rem 0; color: var(--muted); font-size: .8rem; }
+    .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+    .btn-demo { width: 100%; justify-content: center; background: transparent; border: 1px solid var(--border); color: var(--muted); margin-top: 0; }
+    .btn-demo:hover { background: var(--surface-alt, #f5f5f5); color: var(--text); }
   </style>
 </head>
 <body>
@@ -324,6 +328,8 @@ function renderLoginGate(error = false) {
       <h1>Admin Access</h1>
       <p>Enter your admin token to access the CCC License Application Assistant.</p>
       ${error ? '<div class="banner-error" style="display:block">Incorrect token. Please try again.</div>' : ""}
+      <button id="demo-btn" class="btn btn-demo">Enter as demo user</button>
+      <div class="divider">or</div>
       <form id="login-form">
         <div class="field">
           <label for="token-input">Admin Token</label>
@@ -341,14 +347,9 @@ function renderLoginGate(error = false) {
     const spinner = document.getElementById('login-spinner');
     const label = document.getElementById('login-label');
 
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const token = document.getElementById('token-input').value.trim();
-      if (!token) return;
-
+    async function attemptLogin(token) {
       spinner.style.display = 'inline-block';
       label.textContent = 'Verifying…';
-
       try {
         const res = await fetch('/api/auth', {
           method: 'POST',
@@ -363,6 +364,17 @@ function renderLoginGate(error = false) {
       } catch {
         window.location.href = '/admin?error=1';
       }
+    }
+
+    document.getElementById('demo-btn').addEventListener('click', () => {
+      attemptLogin('demo');
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const token = document.getElementById('token-input').value.trim();
+      if (!token) return;
+      attemptLogin(token);
     });
   </script>
 </body>
