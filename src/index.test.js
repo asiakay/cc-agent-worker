@@ -547,7 +547,7 @@ describe("POST /api/match — happy path", () => {
     );
     expect(res.status).toBe(500);
     const body = await res.json();
-    expect(body.error).toBe("Rate limited");
+    expect(body.error).toBe("Internal server error.");
   });
 });
 
@@ -703,7 +703,7 @@ describe("POST /api/draft — happy path", () => {
     );
     expect(res.status).toBe(500);
     const body = await res.json();
-    expect(body.error).toBe("Quota exceeded");
+    expect(body.error).toBe("Internal server error.");
   });
 });
 
@@ -864,7 +864,7 @@ describe("POST / — legacy draft endpoint", () => {
     );
     expect(res.status).toBe(500);
     const body = await res.json();
-    expect(body.error).toBe("Quota exceeded");
+    expect(body.error).toBe("Internal server error.");
   });
 
   it("returns 500 with generic message when SDK throws without message", async () => {

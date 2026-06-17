@@ -339,7 +339,8 @@ Return ONLY the JSON array with no markdown fences, no commentary, no preamble.`
 
         return json({ success: true, matches });
       } catch (err) {
-        return json({ error: err.message ?? "Internal server error." }, 500);
+        console.error("[/api/match]", err);
+        return json({ error: "Internal server error." }, 500);
       }
     }
 
@@ -395,7 +396,8 @@ Return ONLY the JSON array with no markdown fences, no commentary, no preamble.`
 
         return json({ success: true, section: sectionName, savedToKV, draft: generatedDraft });
       } catch (err) {
-        return json({ error: err.message ?? "Internal server error." }, 500);
+        console.error(err);
+        return json({ error: "Internal server error." }, 500);
       }
     }
 
@@ -437,7 +439,8 @@ Help them take this specific action. Provide concrete, practical guidance ground
         const reply = response.content.find((b) => b.type === "text")?.text ?? "";
         return json({ success: true, reply });
       } catch (err) {
-        return json({ error: err.message ?? "Internal server error." }, 500);
+        console.error(err);
+        return json({ error: "Internal server error." }, 500);
       }
     }
 
@@ -471,7 +474,8 @@ Help them take this specific action. Provide concrete, practical guidance ground
 
         return json({ success: true, report });
       } catch (err) {
-        return json({ error: err.message ?? "Internal server error." }, 500);
+        console.error(err);
+        return json({ error: "Internal server error." }, 500);
       }
     }
 
@@ -522,7 +526,8 @@ Help them take this specific action. Provide concrete, practical guidance ground
 
         return json({ success: true, section: sectionName, savedToKV, draft: generatedDraft });
       } catch (err) {
-        return json({ error: err.message ?? "Internal server error." }, 500);
+        console.error(err);
+        return json({ error: "Internal server error." }, 500);
       }
     }
 
