@@ -131,8 +131,10 @@ export default {
 
     /* ── POST /api/match → cooperative matcher ── */
     if (request.method === "POST" && path === "/api/match") {
-      if (!env.ADMIN_TOKEN) return json({ error: "ADMIN_TOKEN not configured." }, 500);
-      if (!checkBearer(request, env)) return json({ error: "Unauthorized." }, 401);
+      if (!checkBearer(request, env)) {
+        if (!env.ADMIN_TOKEN) return json({ error: "ADMIN_TOKEN not configured." }, 500);
+        return json({ error: "Unauthorized." }, 401);
+      }
       if (!env.ANTHROPIC_API_KEY) return json({ error: "ANTHROPIC_API_KEY not configured." }, 500);
 
       let body;
@@ -192,8 +194,10 @@ Return ONLY the JSON array with no markdown fences, no commentary, no preamble.`
 
     /* ── POST /api/draft → authenticated draft generation ── */
     if (request.method === "POST" && path === "/api/draft") {
-      if (!env.ADMIN_TOKEN) return json({ error: "ADMIN_TOKEN not configured." }, 500);
-      if (!checkBearer(request, env)) return json({ error: "Unauthorized." }, 401);
+      if (!checkBearer(request, env)) {
+        if (!env.ADMIN_TOKEN) return json({ error: "ADMIN_TOKEN not configured." }, 500);
+        return json({ error: "Unauthorized." }, 401);
+      }
       if (!env.ANTHROPIC_API_KEY) return json({ error: "ANTHROPIC_API_KEY not configured." }, 500);
 
       let body;
