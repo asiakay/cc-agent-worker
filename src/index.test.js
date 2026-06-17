@@ -202,7 +202,7 @@ describe("unknown route", () => {
 // Auth: checkBearer via /api/auth
 // ---------------------------------------------------------------------------
 describe("POST /api/auth", () => {
-  it("accepts the admin token", async () => {
+  it("accepts the admin token and sets session cookie", async () => {
     const res = await worker.fetch(
       post({}, "/api/auth", { Authorization: "Bearer secret-admin" }),
       makeEnv()
@@ -210,6 +210,8 @@ describe("POST /api/auth", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
+    expect(res.headers.get("Set-Cookie")).toContain("admin_session=");
+    expect(res.headers.get("Set-Cookie")).toContain("HttpOnly");
   });
 
   it("accepts the hardcoded demo token without ADMIN_TOKEN set", async () => {
@@ -220,6 +222,7 @@ describe("POST /api/auth", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
+    expect(res.headers.get("Set-Cookie")).toContain("admin_session=");
   });
 
   it("accepts the hardcoded demo token even when ADMIN_TOKEN is also set", async () => {
@@ -263,6 +266,59 @@ describe("POST /api/auth", () => {
     expect(res.status).toBe(500);
     const body = await res.json();
     expect(body.error).toMatch(/ADMIN_TOKEN not configured/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /admin — cookie-gated dashboard
+// ---------------------------------------------------------------------------
+describe("GET /admin", () => {
+  it("renders login gate when no session cookie", async () => {
+    const res = await worker.fetch(get("/admin"), makeEnv());
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("login-form");
+    expect(body).not.toContain('id="tab-matcher"');
+  });
+
+  it("renders dashboard when valid admin session cookie present", async () => {
+    const req = new Request("https://worker.example/admin", {
+      method: "GET",
+      headers: { Cookie: "admin_session=secret-admin" },
+    });
+    const res = await worker.fetch(req, makeEnv());
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('id="tab-matcher"');
+    expect(body).not.toContain("login-form");
+  });
+
+  it("renders dashboard when demo session cookie present (no ADMIN_TOKEN)", async () => {
+    const req = new Request("https://worker.example/admin", {
+      method: "GET",
+      headers: { Cookie: "admin_session=demo" },
+    });
+    const res = await worker.fetch(req, makeEnv({ ADMIN_TOKEN: undefined }));
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('id="tab-matcher"');
+  });
+
+  it("renders login gate when session cookie has wrong token", async () => {
+    const req = new Request("https://worker.example/admin", {
+      method: "GET",
+      headers: { Cookie: "admin_session=wrong-token" },
+    });
+    const res = await worker.fetch(req, makeEnv());
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("login-form");
+  });
+
+  it("renders error banner when ?error=1 is present", async () => {
+    const res = await worker.fetch(get("/admin?error=1"), makeEnv());
+    const body = await res.text();
+    expect(body).toContain("Incorrect token");
   });
 });
 
