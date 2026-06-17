@@ -28,11 +28,13 @@ function text(body, status = 200) {
 }
 
 /* ── Auth helper ── */
+const DEMO_TOKEN = "demo";
+
 function checkBearer(request, env) {
   const auth = request.headers.get("Authorization") ?? "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   if (env.ADMIN_TOKEN && token === env.ADMIN_TOKEN) return true;
-  if (env.DEMO_TOKEN && token === env.DEMO_TOKEN) return true;
+  if (token === DEMO_TOKEN) return true;
   return false;
 }
 
@@ -122,8 +124,8 @@ export default {
 
     /* ── POST /api/auth → token verification ping ── */
     if (request.method === "POST" && path === "/api/auth") {
-      if (!env.ADMIN_TOKEN && !env.DEMO_TOKEN) return json({ error: "ADMIN_TOKEN not configured." }, 500);
       if (checkBearer(request, env)) return json({ ok: true });
+      if (!env.ADMIN_TOKEN) return json({ error: "ADMIN_TOKEN not configured." }, 500);
       return json({ error: "Invalid token." }, 401);
     }
 
