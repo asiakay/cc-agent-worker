@@ -40,7 +40,9 @@ function isValidToken(token, env) {
 function checkBearer(request, env) {
   const auth = request.headers.get("Authorization") ?? "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-  return isValidToken(token, env);
+  if (isValidToken(token, env)) return true;
+  // Fall back to session cookie so API calls work even when sessionStorage is cleared
+  return isValidToken(getSessionCookie(request), env);
 }
 
 function getSessionCookie(request) {
