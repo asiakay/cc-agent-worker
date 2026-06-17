@@ -588,6 +588,7 @@ export function renderAdmin(isError = false, isAuthed = false) {
     const QUESTIONS = ${questionsJSON};
     let answers = {};
     let step = 0;
+    let _matches = [];
 
     const qArea     = document.getElementById('question-area');
     const stepper   = document.getElementById('stepper');
@@ -726,6 +727,7 @@ export function renderAdmin(isError = false, isAuthed = false) {
     }
 
     function renderMatches(matches) {
+      _matches = matches;
       matchGrid.innerHTML = matches.map((m, idx) => \`
         <div class="match-card" id="match-\${idx}">
           <div class="match-header">
@@ -746,7 +748,7 @@ export function renderAdmin(isError = false, isAuthed = false) {
               <div class="match-label">Recommended next steps</div>
               <ul class="next-steps">\${m.nextSteps.map(s => \`<li>\${s}</li>\`).join('')}</ul>
             </div>
-            <button class="btn btn-sm" onclick="generateExecSummary(\${idx}, \${JSON.stringify(m).replace(/</g,'&lt;')})" id="exec-btn-\${idx}">
+            <button class="btn btn-sm" onclick="generateExecSummary(\${idx})" id="exec-btn-\${idx}">
               <span class="spinner" id="exec-spin-\${idx}"></span>
               <span id="exec-label-\${idx}">Generate Executive Summary</span>
             </button>
@@ -759,7 +761,8 @@ export function renderAdmin(isError = false, isAuthed = false) {
       matchRes.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
-    window.generateExecSummary = async function(idx, match) {
+    window.generateExecSummary = async function(idx) {
+      const match = _matches[idx];
       const btn   = document.getElementById('exec-btn-' + idx);
       const spin  = document.getElementById('exec-spin-' + idx);
       const lbl   = document.getElementById('exec-label-' + idx);
