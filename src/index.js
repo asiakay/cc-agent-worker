@@ -110,7 +110,7 @@ function getSessionCookie(request) {
 }
 
 function sessionCookieHeader(token) {
-  return `admin_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_TTL}`;
+  return `admin_session=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${SESSION_TTL}`;
 }
 
 /**
@@ -275,7 +275,7 @@ export default {
         status: 302,
         headers: {
           Location: "/admin",
-          "Set-Cookie": "admin_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0",
+          "Set-Cookie": "admin_session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0",
         },
       });
     }
