@@ -126,8 +126,12 @@ At the ${answers.capital} capital level with a ${coopStructure} model, estimate:
 - Total facility footprint needed to support that canopy
 - Tiered license class this canopy falls under (Tier 1–11 per 935 CMR 500.002)
 ` : ""}
-## 4. Regulatory Setbacks & Buffers
-List required buffer distances from schools, daycares, playgrounds, and residential zones under Massachusetts law and typical municipal bylaws. Note any county-specific variations known for ${answers.location}.
+## 4. Regulatory Setbacks & Buffer Distances
+
+Return this section as a markdown table with columns:
+| Sensitive Use | Required Buffer | Authority / Citation | Notes |
+
+Include rows for: schools (K-12), daycare centers, playgrounds/parks, residential zones, and any other uses mandated by Massachusetts law or typical ${answers.location} municipal bylaws. Populate "Authority / Citation" with the specific statute or CMR subsection (e.g., 935 CMR 500.110(1), M.G.L. c. 94G § 3, or the municipality name if a local bylaw). Add a [VERIFY WITH MUNICIPALITY] note in the Notes column for any distance that varies by host community agreement.
 
 ## 5. Cannabis-Friendly Municipalities
 Name 2–3 specific towns or cities within or near ${answers.location} that have established cannabis-friendly zoning or approved host community agreements, with a brief note on why each is favorable.
