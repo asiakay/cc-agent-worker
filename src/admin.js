@@ -854,7 +854,7 @@ export function renderAdmin(isError = false, isAuthed = false) {
             </div>
             <div class="match-section">
               <div class="match-label">Recommended next steps</div>
-              <ul class="next-steps">\${m.nextSteps.map(s => \`<li><button class="next-step-btn" onclick="openStepChat(\${JSON.stringify(s)}, \${JSON.stringify({licenseType:m.licenseType,coopStructure:m.coopStructure,fitScore:m.fitScore,rationale:m.rationale})})">\${s}</button></li>\`).join('')}</ul>
+              <ul class="next-steps">\${m.nextSteps.map((s, si) => \`<li><button class="next-step-btn" onclick="openStepChat(\${idx},\${si})">\${s}</button></li>\`).join('')}</ul>
             </div>
             <button class="btn btn-sm" onclick="generateExecSummary(\${idx})" id="exec-btn-\${idx}">
               <span class="spinner" id="exec-spin-\${idx}"></span>
@@ -991,11 +991,12 @@ export function renderAdmin(isError = false, isAuthed = false) {
     const chatInput = document.getElementById('step-chat-input');
     const chatSend = document.getElementById('step-chat-send');
 
-    window.openStepChat = function(step, matchCtx) {
-      chatStep = step;
-      chatMatchCtx = matchCtx;
+    window.openStepChat = function(matchIdx, stepIdx) {
+      const m = _matches[matchIdx];
+      chatStep = m.nextSteps[stepIdx];
+      chatMatchCtx = { licenseType: m.licenseType, coopStructure: m.coopStructure, fitScore: m.fitScore, rationale: m.rationale };
       chatHistory = [];
-      chatTitle.textContent = step;
+      chatTitle.textContent = chatStep;
       chatMessages.innerHTML = '';
       overlay.classList.add('open');
       chatInput.focus();
