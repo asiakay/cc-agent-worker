@@ -211,6 +211,7 @@ describe("POST /api/auth", () => {
     expect(body.ok).toBe(true);
     expect(res.headers.get("Set-Cookie")).toContain("admin_session=");
     expect(res.headers.get("Set-Cookie")).toContain("HttpOnly");
+    expect(res.headers.get("Set-Cookie")).toContain("Secure");
   });
 
   it("accepts the hardcoded demo token without ADMIN_TOKEN set", async () => {
@@ -345,6 +346,7 @@ describe("POST /api/logout", () => {
     );
     const cookie = res.headers.get("Set-Cookie") ?? "";
     expect(cookie).toContain("admin_session=;");
+    expect(cookie).toContain("Secure");
     expect(cookie).toContain("Max-Age=0");
   });
 });
