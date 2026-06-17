@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import worker, { buildSystemInstruction, buildPrompt } from "./index.js";
+import worker, { buildSystemInstruction, buildPrompt, createSessionToken } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Mock the Anthropic SDK — no real network calls
@@ -281,11 +281,13 @@ describe("GET /admin", () => {
   });
 
   it("renders dashboard when valid admin session cookie present", async () => {
+    const env = makeEnv();
+    const sessionToken = await createSessionToken(env);
     const req = new Request("https://worker.example/admin", {
       method: "GET",
-      headers: { Cookie: "admin_session=secret-admin" },
+      headers: { Cookie: `admin_session=${encodeURIComponent(sessionToken)}` },
     });
-    const res = await worker.fetch(req, makeEnv());
+    const res = await worker.fetch(req, env);
     expect(res.status).toBe(200);
     const body = await res.text();
     expect(body).toContain('id="tab-matcher"');
@@ -293,11 +295,13 @@ describe("GET /admin", () => {
   });
 
   it("renders dashboard when demo session cookie present (no ADMIN_TOKEN)", async () => {
+    const env = makeEnv({ ADMIN_TOKEN: undefined });
+    const sessionToken = await createSessionToken(env);
     const req = new Request("https://worker.example/admin", {
       method: "GET",
-      headers: { Cookie: "admin_session=demo" },
+      headers: { Cookie: `admin_session=${encodeURIComponent(sessionToken)}` },
     });
-    const res = await worker.fetch(req, makeEnv({ ADMIN_TOKEN: undefined }));
+    const res = await worker.fetch(req, env);
     expect(res.status).toBe(200);
     const body = await res.text();
     expect(body).toContain('id="tab-matcher"');

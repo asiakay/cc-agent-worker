@@ -29,20 +29,78 @@ function text(body, status = 200) {
 
 /* ── Auth helper ── */
 const DEMO_TOKEN = "demo";
+const SESSION_TTL = 3600; // 1 hour
 
-function isValidToken(token, env) {
+function toBase64url(buf) {
+  return btoa(String.fromCharCode(...new Uint8Array(buf)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+}
+
+function fromBase64url(s) {
+  return Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
+}
+
+async function signingKey(secret) {
+  return crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign", "verify"],
+  );
+}
+
+export async function createSessionToken(env) {
+  const secret = env.ADMIN_TOKEN || DEMO_TOKEN;
+  const key = await signingKey(secret);
+  const now = Math.floor(Date.now() / 1000);
+  const payloadB64 = toBase64url(
+    new TextEncoder().encode(JSON.stringify({ iat: now, exp: now + SESSION_TTL })),
+  );
+  const sig = toBase64url(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payloadB64)));
+  return `${payloadB64}.${sig}`;
+}
+
+async function verifySessionToken(token, env) {
+  if (!token) return false;
+  const dot = token.indexOf(".");
+  if (dot === -1) return false;
+  const payloadB64 = token.slice(0, dot);
+  const sigB64 = token.slice(dot + 1);
+  const secret = env.ADMIN_TOKEN || DEMO_TOKEN;
+  try {
+    const key = await signingKey(secret);
+    const valid = await crypto.subtle.verify(
+      "HMAC",
+      key,
+      fromBase64url(sigB64),
+      new TextEncoder().encode(payloadB64),
+    );
+    if (!valid) return false;
+    const { exp } = JSON.parse(new TextDecoder().decode(fromBase64url(payloadB64)));
+    return Math.floor(Date.now() / 1000) < exp;
+  } catch {
+    return false;
+  }
+}
+
+// Accepts raw ADMIN_TOKEN ("demo" or env.ADMIN_TOKEN) — used only for the
+// Bearer header so existing API clients don't break. Cookie auth uses signed
+// session tokens exclusively.
+function isValidRawToken(token, env) {
   if (!token) return false;
   if (token === DEMO_TOKEN) return true;
   if (env.ADMIN_TOKEN && token === env.ADMIN_TOKEN) return true;
   return false;
 }
 
-function checkBearer(request, env) {
+async function checkBearer(request, env) {
   const auth = request.headers.get("Authorization") ?? "";
-  const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-  if (isValidToken(token, env)) return true;
-  // Fall back to session cookie so API calls work even when sessionStorage is cleared
-  return isValidToken(getSessionCookie(request), env);
+  const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  if (isValidRawToken(bearer, env)) return true;
+  if (await verifySessionToken(bearer, env)) return true;
+  // Fall back to session cookie (must be a signed session token)
+  return verifySessionToken(getSessionCookie(request), env);
 }
 
 function getSessionCookie(request) {
@@ -52,7 +110,7 @@ function getSessionCookie(request) {
 }
 
 function sessionCookieHeader(token) {
-  return `admin_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800`;
+  return `admin_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_TTL}`;
 }
 
 /**
@@ -189,8 +247,7 @@ export default {
     /* ── GET /admin → protected dashboard ── */
     if (request.method === "GET" && path === "/admin") {
       const hasError = url.searchParams.get("error") === "1";
-      const sessionToken = getSessionCookie(request);
-      const isAuthed = isValidToken(sessionToken, env);
+      const isAuthed = await verifySessionToken(getSessionCookie(request), env);
       return html(renderAdmin(hasError, isAuthed));
     }
 
@@ -198,12 +255,13 @@ export default {
     if (request.method === "POST" && path === "/api/auth") {
       const auth = request.headers.get("Authorization") ?? "";
       const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-      if (isValidToken(token, env)) {
+      if (isValidRawToken(token, env)) {
+        const sessionToken = await createSessionToken(env);
         return new Response(JSON.stringify({ ok: true }), {
           status: 200,
           headers: {
             "Content-Type": "application/json",
-            "Set-Cookie": sessionCookieHeader(token),
+            "Set-Cookie": sessionCookieHeader(sessionToken),
             ...CORS_HEADERS,
           },
         });
@@ -224,7 +282,7 @@ export default {
 
     /* ── POST /api/match → cooperative matcher ── */
     if (request.method === "POST" && path === "/api/match") {
-      if (!checkBearer(request, env)) {
+      if (!await checkBearer(request, env)) {
         if (!env.ADMIN_TOKEN) return json({ error: "ADMIN_TOKEN not configured." }, 500);
         return json({ error: "Unauthorized." }, 401);
       }
@@ -287,7 +345,7 @@ Return ONLY the JSON array with no markdown fences, no commentary, no preamble.`
 
     /* ── POST /api/draft → authenticated draft generation ── */
     if (request.method === "POST" && path === "/api/draft") {
-      if (!checkBearer(request, env)) {
+      if (!await checkBearer(request, env)) {
         if (!env.ADMIN_TOKEN) return json({ error: "ADMIN_TOKEN not configured." }, 500);
         return json({ error: "Unauthorized." }, 401);
       }
@@ -343,7 +401,7 @@ Return ONLY the JSON array with no markdown fences, no commentary, no preamble.`
 
     /* ── POST /api/chat → next-step recommendation chatbot ── */
     if (request.method === "POST" && path === "/api/chat") {
-      if (!checkBearer(request, env)) {
+      if (!await checkBearer(request, env)) {
         if (!env.ADMIN_TOKEN) return json({ error: "ADMIN_TOKEN not configured." }, 500);
         return json({ error: "Unauthorized." }, 401);
       }
@@ -385,7 +443,7 @@ Help them take this specific action. Provide concrete, practical guidance ground
 
     /* ── POST /api/parcel → agentic parcel identification ── */
     if (request.method === "POST" && path === "/api/parcel") {
-      if (!checkBearer(request, env)) {
+      if (!await checkBearer(request, env)) {
         if (!env.ADMIN_TOKEN) return json({ error: "ADMIN_TOKEN not configured." }, 500);
         return json({ error: "Unauthorized." }, 401);
       }
