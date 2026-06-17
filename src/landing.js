@@ -323,7 +323,7 @@ export function renderLanding() {
   </div>
 
   <footer>
-    &copy; 2025 CCCAssist &mdash; For informational use only. Not legal advice.
+    &copy; 2026 CCCAssist &mdash; For informational use only. Not legal advice.
     Always verify regulatory citations against current <a href="https://mass.gov/cannabis-control-commission" target="_blank" rel="noopener">CCC guidelines</a> before submission.
   </footer>
 

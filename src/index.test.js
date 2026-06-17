@@ -574,7 +574,8 @@ describe("POST /api/draft — happy path", () => {
       env
     );
     const body = await res.json();
-    expect(body.savedToKV).toBe(true);
+    expect(body.savedToKV).toBeUndefined();
+    expect(env.APPLICATION_DRAFTS.put).toHaveBeenCalledOnce();
     const [kvKey, kvValue] = env.APPLICATION_DRAFTS.put.mock.calls[0];
     expect(kvKey).toBe("security-plan");
     const stored = JSON.parse(kvValue);
@@ -583,13 +584,15 @@ describe("POST /api/draft — happy path", () => {
     expect(stored.savedAt).toBeDefined();
   });
 
-  it("reports savedToKV: false when KV binding absent", async () => {
+  it("does not call KV.put when KV binding absent", async () => {
     const res = await worker.fetch(
       authedPost({ sectionName: "Inventory Plan", task: "seed-to-sale" }, "/api/draft"),
       makeEnv({ APPLICATION_DRAFTS: undefined })
     );
+    expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.savedToKV).toBe(false);
+    expect(body.savedToKV).toBeUndefined();
+    expect(body.success).toBe(true);
   });
 
   it("passes claude-opus-4-8 to the SDK", async () => {
@@ -741,14 +744,14 @@ describe("POST / — legacy draft endpoint", () => {
     expect(body.section).toBe("Environmental Plan - Section 3.2");
   });
 
-  it("saves draft to KV and reports savedToKV: true", async () => {
+  it("saves draft to KV", async () => {
     const env = makeEnv();
     const res = await worker.fetch(
       authedPost({ sectionName: "Security Plan", task: "24/7 camera coverage" }),
       env
     );
     const body = await res.json();
-    expect(body.savedToKV).toBe(true);
+    expect(body.savedToKV).toBeUndefined();
     expect(env.APPLICATION_DRAFTS.put).toHaveBeenCalledOnce();
     const [kvKey, kvValue] = env.APPLICATION_DRAFTS.put.mock.calls[0];
     expect(kvKey).toBe("security-plan");
@@ -758,13 +761,15 @@ describe("POST / — legacy draft endpoint", () => {
     expect(stored.savedAt).toBeDefined();
   });
 
-  it("reports savedToKV: false when KV binding is absent", async () => {
+  it("does not call KV.put when KV binding is absent", async () => {
     const res = await worker.fetch(
       authedPost({ sectionName: "Inventory Plan", task: "seed-to-sale tracking" }),
       makeEnv({ APPLICATION_DRAFTS: undefined })
     );
+    expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.savedToKV).toBe(false);
+    expect(body.savedToKV).toBeUndefined();
+    expect(body.success).toBe(true);
   });
 
   it("returns 400 for non-JSON body", async () => {
@@ -876,5 +881,124 @@ describe("POST / — legacy draft endpoint", () => {
     expect(res.status).toBe(500);
     const body = await res.json();
     expect(body.error).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/chat — step length validation
+// ---------------------------------------------------------------------------
+describe("POST /api/chat — step validation", () => {
+  it("returns 400 when step exceeds 300 characters", async () => {
+    const res = await worker.fetch(
+      authedPost({ step: "a".repeat(301), messages: [] }, "/api/chat"),
+      makeEnv()
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/exceeds maximum length/i);
+  });
+
+  it("accepts step at exactly 300 characters", async () => {
+    const res = await worker.fetch(
+      authedPost({ step: "a".repeat(300), messages: [] }, "/api/chat"),
+      makeEnv()
+    );
+    // Not 400 — either 200 or 500 (SDK mock), but not a validation error
+    expect(res.status).not.toBe(400);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET + POST /api/session
+// ---------------------------------------------------------------------------
+describe("/api/session", () => {
+  it("GET returns { state: null } when KV is absent", async () => {
+    const res = await worker.fetch(
+      new Request("https://worker.example/api/session", {
+        headers: { Authorization: "Bearer secret-admin" },
+      }),
+      makeEnv({ APPLICATION_DRAFTS: undefined })
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.state).toBeNull();
+  });
+
+  it("GET returns { state: null } when no saved state exists", async () => {
+    const res = await worker.fetch(
+      new Request("https://worker.example/api/session", {
+        headers: { Authorization: "Bearer secret-admin" },
+      }),
+      makeEnv()
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.state).toBeNull();
+  });
+
+  it("POST saves state and GET returns it (round-trip)", async () => {
+    const env = makeEnv();
+    const state = { answers: { location: "Boston" }, step: 2, _matches: [] };
+
+    const postRes = await worker.fetch(
+      authedPost({ state }, "/api/session"),
+      env
+    );
+    expect(postRes.status).toBe(200);
+    expect((await postRes.json()).ok).toBe(true);
+
+    // Verify KV.put was called with the right key shape and TTL
+    expect(env.APPLICATION_DRAFTS.put).toHaveBeenCalledOnce();
+    const [kvKey, kvValue, kvOpts] = env.APPLICATION_DRAFTS.put.mock.calls[0];
+    expect(kvKey).toMatch(/^session:/);
+    expect(JSON.parse(kvValue)).toEqual(state);
+    expect(kvOpts.expirationTtl).toBe(3600);
+
+    // Round-trip: GET should return the saved state
+    const getRes = await worker.fetch(
+      new Request("https://worker.example/api/session", {
+        headers: { Authorization: "Bearer secret-admin" },
+      }),
+      env
+    );
+    expect(getRes.status).toBe(200);
+    const getBody = await getRes.json();
+    expect(getBody.state).toEqual(state);
+  });
+
+  it("GET returns { ok: true } when KV binding is absent on POST", async () => {
+    const res = await worker.fetch(
+      authedPost({ state: { step: 1 } }, "/api/session"),
+      makeEnv({ APPLICATION_DRAFTS: undefined })
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+  });
+
+  it("GET returns 401 when unauthenticated", async () => {
+    const res = await worker.fetch(
+      new Request("https://worker.example/api/session"),
+      makeEnv()
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("POST returns 401 when unauthenticated", async () => {
+    const res = await worker.fetch(
+      post({ state: {} }, "/api/session"),
+      makeEnv()
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("POST returns 400 when state field is missing", async () => {
+    const res = await worker.fetch(
+      authedPost({}, "/api/session"),
+      makeEnv()
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/state/i);
   });
 });

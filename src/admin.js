@@ -382,6 +382,15 @@ const BASE_STYLES = `
     color: var(--muted);
     padding: 2rem 1rem 1.5rem;
   }
+
+  @media (max-width: 600px) {
+    .tab-bar { padding: 0 .5rem; gap: 0; }
+    .tab-btn { padding: .75rem .6rem; font-size: .8rem; }
+    .tab-panel { padding: 1rem .75rem; }
+    .card { padding: 1.25rem 1rem; }
+    .match-header { flex-wrap: wrap; gap: .5rem; }
+    .match-body { padding: 1rem; }
+  }
 `;
 
 /* ── Login gate page ── */
@@ -685,6 +694,42 @@ export function renderAdmin(isError = false, isAuthed = false) {
     /* ── AUTH TOKEN ── */
     const TOKEN = sessionStorage.getItem('admin_token') || '';
 
+    /* ── SESSION PERSISTENCE ── */
+    let _saveTimer = null;
+    function saveSession() {
+      clearTimeout(_saveTimer);
+      _saveTimer = setTimeout(async () => {
+        try {
+          await fetch('/api/session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + TOKEN },
+            body: JSON.stringify({ state: { answers, step, _matches, chatStep, chatMatchCtx } }),
+          });
+        } catch {}
+      }, 500);
+    }
+
+    async function restoreSession() {
+      try {
+        const res = await fetch('/api/session', {
+          headers: { 'Authorization': 'Bearer ' + TOKEN },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.state) return;
+        const s = data.state;
+        if (s.answers) answers = s.answers;
+        if (typeof s.step === 'number') step = s.step;
+        if (Array.isArray(s._matches) && s._matches.length) {
+          _matches = s._matches;
+          renderMatches(_matches);
+        }
+        if (s.chatStep) chatStep = s.chatStep;
+        if (s.chatMatchCtx) chatMatchCtx = s.chatMatchCtx;
+        renderQuestion();
+      } catch {}
+    }
+
     /* ── TABS ── */
     document.querySelectorAll('.tab-btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -778,6 +823,7 @@ export function renderAdmin(isError = false, isAuthed = false) {
       answers[QUESTIONS[step].id] = getStepAnswer();
       step--;
       renderQuestion();
+      saveSession();
     });
 
     nextBtn.addEventListener('click', async () => {
@@ -789,6 +835,7 @@ export function renderAdmin(isError = false, isAuthed = false) {
       }
       matchErr.style.display = 'none';
       answers[QUESTIONS[step].id] = vals;
+      saveSession();
 
       if (step < QUESTIONS.length - 1) {
         step++;
@@ -829,6 +876,7 @@ export function renderAdmin(isError = false, isAuthed = false) {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Server error');
         renderMatches(data.matches);
+        saveSession();
       } catch (err) {
         matchErr.textContent = err.message;
         matchErr.style.display = 'block';
@@ -1046,6 +1094,8 @@ export function renderAdmin(isError = false, isAuthed = false) {
     let chatMatchCtx = null;
     let chatHistory = [];
 
+    restoreSession();
+
     const overlay = document.getElementById('step-chat-overlay');
     const chatTitle = document.getElementById('step-chat-title');
     const chatMessages = document.getElementById('step-chat-messages');
@@ -1057,6 +1107,7 @@ export function renderAdmin(isError = false, isAuthed = false) {
       chatStep = m.nextSteps[stepIdx];
       chatMatchCtx = { licenseType: m.licenseType, coopStructure: m.coopStructure, fitScore: m.fitScore, rationale: m.rationale };
       chatHistory = [];
+      saveSession();
       chatTitle.textContent = chatStep;
       chatMessages.innerHTML = '';
       overlay.classList.add('open');

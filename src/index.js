@@ -94,6 +94,15 @@ function isValidRawToken(token, env) {
   return false;
 }
 
+function resolveSessionKey(request, env) {
+  const auth = request.headers.get("Authorization") ?? "";
+  const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  const token = bearer || getSessionCookie(request);
+  // Use first 16 chars of the token as an opaque KV key fragment.
+  // This avoids storing the full token as a key while still being session-scoped.
+  return token.slice(0, 16) || "anon";
+}
+
 async function checkBearer(request, env) {
   const auth = request.headers.get("Authorization") ?? "";
   const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
@@ -384,17 +393,15 @@ Return ONLY the JSON array with no markdown fences, no commentary, no preamble.`
 
         if (!generatedDraft) return json({ error: "Claude returned an empty response." }, 502);
 
-        let savedToKV = false;
         if (env.APPLICATION_DRAFTS) {
           const kvKey = sectionName.trim().toLowerCase().replace(/\s+/g, "-");
           await env.APPLICATION_DRAFTS.put(
             kvKey,
             JSON.stringify({ sectionName, draft: generatedDraft, savedAt: new Date().toISOString() })
           );
-          savedToKV = true;
         }
 
-        return json({ success: true, section: sectionName, savedToKV, draft: generatedDraft });
+        return json({ success: true, section: sectionName, draft: generatedDraft });
       } catch (err) {
         console.error(err);
         return json({ error: "Internal server error." }, 500);
@@ -414,6 +421,7 @@ Return ONLY the JSON array with no markdown fences, no commentary, no preamble.`
 
       const { step, matchContext, messages } = body ?? {};
       if (!step || typeof step !== "string") return json({ error: "Missing required field: step." }, 400);
+      if (step.length > 300) return json({ error: "Field 'step' exceeds maximum length." }, 400);
       if (!Array.isArray(messages)) return json({ error: "Missing required field: messages." }, 400);
 
       const contextBlurb = matchContext
@@ -479,6 +487,39 @@ Help them take this specific action. Provide concrete, practical guidance ground
       }
     }
 
+    /* ── GET /api/session → restore wizard session state ── */
+    if (request.method === "GET" && path === "/api/session") {
+      if (!await checkBearer(request, env)) {
+        if (!env.ADMIN_TOKEN) return json({ error: "ADMIN_TOKEN not configured." }, 500);
+        return json({ error: "Unauthorized." }, 401);
+      }
+      if (!env.APPLICATION_DRAFTS) return json({ state: null });
+      const sessionKey = `session:${resolveSessionKey(request, env)}`;
+      const raw = await env.APPLICATION_DRAFTS.get(sessionKey);
+      if (!raw) return json({ state: null });
+      try {
+        return json({ state: JSON.parse(raw) });
+      } catch {
+        return json({ state: null });
+      }
+    }
+
+    /* ── POST /api/session → persist wizard session state ── */
+    if (request.method === "POST" && path === "/api/session") {
+      if (!await checkBearer(request, env)) {
+        if (!env.ADMIN_TOKEN) return json({ error: "ADMIN_TOKEN not configured." }, 500);
+        return json({ error: "Unauthorized." }, 401);
+      }
+      if (!env.APPLICATION_DRAFTS) return json({ ok: true });
+      let body;
+      try { body = await request.json(); } catch { return json({ error: "Invalid JSON body." }, 400); }
+      const { state } = body ?? {};
+      if (state === undefined) return json({ error: "Missing required field: state." }, 400);
+      const sessionKey = `session:${resolveSessionKey(request, env)}`;
+      await env.APPLICATION_DRAFTS.put(sessionKey, JSON.stringify(state), { expirationTtl: SESSION_TTL });
+      return json({ ok: true });
+    }
+
     /* ── POST / → legacy draft endpoint (backward compat) ── */
     if (request.method === "POST" && path === "/") {
       if (!await checkBearer(request, env)) {
@@ -514,17 +555,15 @@ Help them take this specific action. Provide concrete, practical guidance ground
 
         if (!generatedDraft) return json({ error: "Claude returned an empty response." }, 502);
 
-        let savedToKV = false;
         if (env.APPLICATION_DRAFTS) {
           const kvKey = sectionName.trim().toLowerCase().replace(/\s+/g, "-");
           await env.APPLICATION_DRAFTS.put(
             kvKey,
             JSON.stringify({ sectionName, draft: generatedDraft, savedAt: new Date().toISOString() })
           );
-          savedToKV = true;
         }
 
-        return json({ success: true, section: sectionName, savedToKV, draft: generatedDraft });
+        return json({ success: true, section: sectionName, draft: generatedDraft });
       } catch (err) {
         console.error(err);
         return json({ error: "Internal server error." }, 500);
