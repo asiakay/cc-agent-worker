@@ -752,7 +752,12 @@ export function renderAdmin(isError = false, isAuthed = false) {
               <span class="spinner" id="exec-spin-\${idx}"></span>
               <span id="exec-label-\${idx}">Generate Executive Summary</span>
             </button>
-            <pre class="draft-output" id="exec-draft-\${idx}"></pre>
+            <div id="exec-output-wrap-\${idx}" style="display:none">
+              <div style="display:flex;justify-content:flex-end;margin-bottom:.4rem">
+                <button class="btn btn-sm" id="exec-copy-\${idx}" onclick="copyExecSummary(\${idx})" style="font-size:.75rem;padding:.25rem .7rem">Copy</button>
+              </div>
+              <pre class="draft-output" id="exec-draft-\${idx}" style="display:block;margin-top:0"></pre>
+            </div>
           </div>
         </div>
       \`).join('');
@@ -767,6 +772,7 @@ export function renderAdmin(isError = false, isAuthed = false) {
       const spin  = document.getElementById('exec-spin-' + idx);
       const lbl   = document.getElementById('exec-label-' + idx);
       const out   = document.getElementById('exec-draft-' + idx);
+      const wrap  = document.getElementById('exec-output-wrap-' + idx);
 
       btn.disabled = true;
       spin.style.display = 'inline-block';
@@ -786,16 +792,24 @@ export function renderAdmin(isError = false, isAuthed = false) {
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Unexpected error');
         out.textContent = data.draft;
-        out.style.display = 'block';
-        out.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        wrap.style.display = 'block';
+        wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
       } catch (err) {
         out.textContent = 'Error: ' + err.message;
-        out.style.display = 'block';
+        wrap.style.display = 'block';
       } finally {
         btn.disabled = false;
         spin.style.display = 'none';
         lbl.textContent = 'Regenerate Executive Summary';
       }
+    };
+
+    window.copyExecSummary = async function(idx) {
+      const text = document.getElementById('exec-draft-' + idx).textContent;
+      const copyBtn = document.getElementById('exec-copy-' + idx);
+      await navigator.clipboard.writeText(text);
+      copyBtn.textContent = 'Copied!';
+      setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
     };
 
     /* ══════════════════════════════════════════
