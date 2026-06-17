@@ -327,7 +327,7 @@ const BASE_STYLES = `
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 1rem;
-    white-space: pre-wrap;
+    white-space: normal;
     font-size: .85rem;
     line-height: 1.7;
     max-height: 420px;
@@ -660,7 +660,7 @@ export function renderAdmin(isError = false, isAuthed = false) {
         <h2 id="draft-result-title" style="font-size:1rem;color:var(--green-dark);">Draft Output</h2>
         <button class="btn btn-ghost btn-sm" id="copy-btn">Copy</button>
       </div>
-      <pre id="draft-output" class="draft-output" style="display:block;max-height:600px;"></pre>
+      <div id="draft-output" class="draft-output" style="display:block;max-height:600px;"></div>
     </div>
   </div>
 
@@ -869,7 +869,7 @@ export function renderAdmin(isError = false, isAuthed = false) {
               <div style="display:flex;justify-content:flex-end;margin-bottom:.4rem">
                 <button class="btn btn-sm" id="exec-copy-\${idx}" onclick="copyExecSummary(\${idx})" style="font-size:.75rem;padding:.25rem .7rem">Copy</button>
               </div>
-              <pre class="draft-output" id="exec-draft-\${idx}" style="display:block;margin-top:0"></pre>
+              <div class="draft-output" id="exec-draft-\${idx}" style="display:block;margin-top:0"></div>
             </div>
             <button class="btn btn-sm" onclick="generateParcelReport(\${idx})" id="parcel-btn-\${idx}" style="margin-top:.5rem">
               <span class="spinner" id="parcel-spin-\${idx}"></span>
@@ -880,7 +880,7 @@ export function renderAdmin(isError = false, isAuthed = false) {
                 <span style="font-size:.8rem;font-weight:600;color:var(--green-dark)">Parcel &amp; Zoning Report</span>
                 <button class="btn btn-sm btn-ghost" id="parcel-copy-\${idx}" onclick="copyParcelReport(\${idx})" style="font-size:.75rem;padding:.25rem .7rem">Copy</button>
               </div>
-              <pre class="draft-output" id="parcel-draft-\${idx}" style="display:block;margin-top:0"></pre>
+              <div class="draft-output" id="parcel-draft-\${idx}" style="display:block;margin-top:0"></div>
             </div>
           </div>
         </div>
@@ -915,7 +915,7 @@ export function renderAdmin(isError = false, isAuthed = false) {
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Unexpected error');
-        out.textContent = data.draft;
+        out.innerHTML = renderMarkdown(data.draft);
         wrap.style.display = 'block';
         wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
       } catch (err) {
@@ -960,7 +960,7 @@ export function renderAdmin(isError = false, isAuthed = false) {
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Unexpected error');
-        out.textContent = data.report;
+        out.innerHTML = renderMarkdown(data.report);
         wrap.style.display = 'block';
         wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
       } catch (err) {
@@ -1018,7 +1018,7 @@ export function renderAdmin(isError = false, isAuthed = false) {
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Unexpected error');
         draftTitle.textContent     = data.section + ' — Draft';
-        draftOut.textContent       = data.draft;
+        draftOut.innerHTML         = renderMarkdown(data.draft);
         draftResult.style.display  = 'block';
         draftResult.scrollIntoView({ behavior: 'smooth', block: 'start' });
       } catch (err) {
