@@ -164,8 +164,10 @@ def save_results(gdf: gpd.GeoDataFrame) -> Path:
         "LAT", "LON",
         "is_compliant", "closest_sensitive_site_name", "distance_to_closest_ft",
     ]
+    # Drop internal join artifacts before export
+    _drop = {"index_right", "index_school", "SITE_NAME", "dist_m"}
     existing_core = [c for c in core_cols if c in df.columns]
-    extra_cols    = [c for c in df.columns if c not in core_cols and c not in ("index_right",)]
+    extra_cols    = [c for c in df.columns if c not in core_cols and c not in _drop]
     final_cols    = existing_core + extra_cols
 
     df[final_cols].to_csv(OUTPUT_FILE, index=False)
