@@ -1002,3 +1002,412 @@ describe("/api/session", () => {
     expect(body.error).toMatch(/state/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// POST /api/chat — auth + happy path
+// ---------------------------------------------------------------------------
+describe("POST /api/chat — auth", () => {
+  it("allows demo token when ADMIN_TOKEN is not set", async () => {
+    const res = await worker.fetch(
+      demoPost({ step: "Register your cooperative", messages: [] }, "/api/chat"),
+      makeEnv({ ADMIN_TOKEN: undefined })
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("allows demo token when ADMIN_TOKEN is set", async () => {
+    const res = await worker.fetch(
+      demoPost({ step: "Register your cooperative", messages: [] }, "/api/chat"),
+      makeEnv()
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("allows real admin token", async () => {
+    const res = await worker.fetch(
+      authedPost({ step: "Register your cooperative", messages: [] }, "/api/chat"),
+      makeEnv()
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("returns 401 for wrong token when ADMIN_TOKEN is set", async () => {
+    const res = await worker.fetch(
+      authedPost({ step: "Register", messages: [] }, "/api/chat", "bad-token"),
+      makeEnv()
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 500 when no token and ADMIN_TOKEN not configured", async () => {
+    const res = await worker.fetch(
+      post({ step: "Register", messages: [] }, "/api/chat"),
+      makeEnv({ ADMIN_TOKEN: undefined })
+    );
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toMatch(/ADMIN_TOKEN not configured/i);
+  });
+});
+
+describe("POST /api/chat — validation", () => {
+  it("returns 400 when step is missing", async () => {
+    const res = await worker.fetch(
+      authedPost({ messages: [] }, "/api/chat"),
+      makeEnv()
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/step/i);
+  });
+
+  it("returns 400 when step is not a string", async () => {
+    const res = await worker.fetch(
+      authedPost({ step: 42, messages: [] }, "/api/chat"),
+      makeEnv()
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/step/i);
+  });
+
+  it("returns 400 when step exceeds 300 characters", async () => {
+    const res = await worker.fetch(
+      authedPost({ step: "x".repeat(301), messages: [] }, "/api/chat"),
+      makeEnv()
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/exceeds maximum length/i);
+  });
+
+  it("accepts step at exactly 300 characters", async () => {
+    const res = await worker.fetch(
+      authedPost({ step: "x".repeat(300), messages: [] }, "/api/chat"),
+      makeEnv()
+    );
+    expect(res.status).not.toBe(400);
+  });
+
+  it("returns 400 when messages is missing", async () => {
+    const res = await worker.fetch(
+      authedPost({ step: "Register" }, "/api/chat"),
+      makeEnv()
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/messages/i);
+  });
+
+  it("returns 400 when messages is not an array", async () => {
+    const res = await worker.fetch(
+      authedPost({ step: "Register", messages: "not an array" }, "/api/chat"),
+      makeEnv()
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/messages/i);
+  });
+
+  it("returns 400 for non-JSON body", async () => {
+    const req = new Request("https://worker.example/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer secret-admin" },
+      body: "not json",
+    });
+    const res = await worker.fetch(req, makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 500 when ANTHROPIC_API_KEY is missing", async () => {
+    const res = await worker.fetch(
+      authedPost({ step: "Register your cooperative", messages: [] }, "/api/chat"),
+      makeEnv({ ANTHROPIC_API_KEY: undefined })
+    );
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toMatch(/ANTHROPIC_API_KEY/i);
+  });
+});
+
+describe("POST /api/chat — happy path", () => {
+  const MOCK_REPLY = "To register your cooperative, file Articles of Organization with the Secretary of State.";
+
+  beforeEach(() => {
+    mockCreate.mockResolvedValue({ content: [{ type: "text", text: MOCK_REPLY }] });
+  });
+
+  it("returns 200 with reply", async () => {
+    const res = await worker.fetch(
+      authedPost({ step: "Register your cooperative", messages: [{ role: "user", content: "How?" }] }, "/api/chat"),
+      makeEnv()
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.reply).toBe(MOCK_REPLY);
+  });
+
+  it("uses claude-haiku-4-5-20251001 for fast responses", async () => {
+    await worker.fetch(
+      authedPost({ step: "Register your cooperative", messages: [] }, "/api/chat"),
+      makeEnv()
+    );
+    expect(mockCreate.mock.calls[0][0].model).toBe("claude-haiku-4-5-20251001");
+  });
+
+  it("embeds the step in the system prompt", async () => {
+    await worker.fetch(
+      authedPost({ step: "File Articles of Organization", messages: [] }, "/api/chat"),
+      makeEnv()
+    );
+    const systemPrompt = mockCreate.mock.calls[0][0].system;
+    expect(systemPrompt).toContain("File Articles of Organization");
+  });
+
+  it("includes matchContext details in system prompt when provided", async () => {
+    await worker.fetch(
+      authedPost({
+        step: "Open cooperative bank account",
+        matchContext: {
+          licenseType: "Adult-Use Cultivator",
+          coopStructure: "Worker Cooperative",
+          fitScore: 92,
+          rationale: "Strong fit.",
+        },
+        messages: [],
+      }, "/api/chat"),
+      makeEnv()
+    );
+    const systemPrompt = mockCreate.mock.calls[0][0].system;
+    expect(systemPrompt).toContain("Adult-Use Cultivator");
+    expect(systemPrompt).toContain("Worker Cooperative");
+    expect(systemPrompt).toContain("92");
+  });
+
+  it("passes conversation messages to the SDK", async () => {
+    const messages = [
+      { role: "user", content: "What do I do first?" },
+      { role: "assistant", content: "Start by filing with the Secretary of State." },
+      { role: "user", content: "What form do I use?" },
+    ];
+    await worker.fetch(
+      authedPost({ step: "Register", messages }, "/api/chat"),
+      makeEnv()
+    );
+    expect(mockCreate.mock.calls[0][0].messages).toEqual(messages);
+  });
+
+  it("caps max_tokens at 1024", async () => {
+    await worker.fetch(
+      authedPost({ step: "Register", messages: [] }, "/api/chat"),
+      makeEnv()
+    );
+    expect(mockCreate.mock.calls[0][0].max_tokens).toBe(1024);
+  });
+
+  it("sets CORS headers on 200 response", async () => {
+    const res = await worker.fetch(
+      authedPost({ step: "Register", messages: [] }, "/api/chat"),
+      makeEnv()
+    );
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+  });
+
+  it("returns 500 when SDK throws", async () => {
+    mockCreate.mockRejectedValueOnce(new Error("Service unavailable"));
+    const res = await worker.fetch(
+      authedPost({ step: "Register", messages: [] }, "/api/chat"),
+      makeEnv()
+    );
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toBe("Internal server error.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/parcel — auth + happy path
+// ---------------------------------------------------------------------------
+const VALID_PARCEL_BODY = {
+  licenseType: "Adult-Use Cultivator",
+  coopStructure: "Worker Cooperative",
+  answers: { location: "worcester", capital: "250k_1m", experience: "5 years" },
+};
+
+describe("POST /api/parcel — auth", () => {
+  it("allows demo token when ADMIN_TOKEN is not set", async () => {
+    const res = await worker.fetch(
+      demoPost(VALID_PARCEL_BODY, "/api/parcel"),
+      makeEnv({ ADMIN_TOKEN: undefined })
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("allows demo token when ADMIN_TOKEN is set", async () => {
+    const res = await worker.fetch(
+      demoPost(VALID_PARCEL_BODY, "/api/parcel"),
+      makeEnv()
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("allows real admin token", async () => {
+    const res = await worker.fetch(
+      authedPost(VALID_PARCEL_BODY, "/api/parcel"),
+      makeEnv()
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("returns 401 for wrong token when ADMIN_TOKEN is set", async () => {
+    const res = await worker.fetch(
+      authedPost(VALID_PARCEL_BODY, "/api/parcel", "bad-token"),
+      makeEnv()
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 500 when no token and ADMIN_TOKEN not configured", async () => {
+    const res = await worker.fetch(
+      post(VALID_PARCEL_BODY, "/api/parcel"),
+      makeEnv({ ADMIN_TOKEN: undefined })
+    );
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toMatch(/ADMIN_TOKEN not configured/i);
+  });
+});
+
+describe("POST /api/parcel — validation", () => {
+  it("returns 400 when licenseType is missing", async () => {
+    const { licenseType: _, ...body } = VALID_PARCEL_BODY;
+    const res = await worker.fetch(authedPost(body, "/api/parcel"), makeEnv());
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toMatch(/licenseType/i);
+  });
+
+  it("returns 400 when coopStructure is missing", async () => {
+    const { coopStructure: _, ...body } = VALID_PARCEL_BODY;
+    const res = await worker.fetch(authedPost(body, "/api/parcel"), makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 when answers is missing", async () => {
+    const { answers: _, ...body } = VALID_PARCEL_BODY;
+    const res = await worker.fetch(authedPost(body, "/api/parcel"), makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 when answers is not an object", async () => {
+    const res = await worker.fetch(
+      authedPost({ ...VALID_PARCEL_BODY, answers: "not-an-object" }, "/api/parcel"),
+      makeEnv()
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 for non-JSON body", async () => {
+    const req = new Request("https://worker.example/api/parcel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer secret-admin" },
+      body: "not json",
+    });
+    const res = await worker.fetch(req, makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 500 when ANTHROPIC_API_KEY is missing", async () => {
+    const res = await worker.fetch(
+      authedPost(VALID_PARCEL_BODY, "/api/parcel"),
+      makeEnv({ ANTHROPIC_API_KEY: undefined })
+    );
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toMatch(/ANTHROPIC_API_KEY/i);
+  });
+});
+
+const MOCK_PARCEL_REPORT = "## 1. Permitted Zoning Districts\n\nIndustrial A zones typically permit cultivation...";
+
+describe("POST /api/parcel — happy path", () => {
+  beforeEach(() => {
+    mockCreate.mockResolvedValue({ content: [{ type: "text", text: MOCK_PARCEL_REPORT }] });
+  });
+
+  it("returns 200 with parcel report", async () => {
+    const res = await worker.fetch(
+      authedPost(VALID_PARCEL_BODY, "/api/parcel"),
+      makeEnv()
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.report).toBe(MOCK_PARCEL_REPORT);
+  });
+
+  it("uses claude-opus-4-8 for detailed analysis", async () => {
+    await worker.fetch(authedPost(VALID_PARCEL_BODY, "/api/parcel"), makeEnv());
+    expect(mockCreate.mock.calls[0][0].model).toBe("claude-opus-4-8");
+  });
+
+  it("embeds licenseType in the user prompt", async () => {
+    await worker.fetch(authedPost(VALID_PARCEL_BODY, "/api/parcel"), makeEnv());
+    const prompt = mockCreate.mock.calls[0][0].messages[0].content;
+    expect(prompt).toContain("Adult-Use Cultivator");
+  });
+
+  it("embeds coopStructure in the user prompt", async () => {
+    await worker.fetch(authedPost(VALID_PARCEL_BODY, "/api/parcel"), makeEnv());
+    const prompt = mockCreate.mock.calls[0][0].messages[0].content;
+    expect(prompt).toContain("Worker Cooperative");
+  });
+
+  it("includes location from answers in the user prompt", async () => {
+    await worker.fetch(authedPost(VALID_PARCEL_BODY, "/api/parcel"), makeEnv());
+    const prompt = mockCreate.mock.calls[0][0].messages[0].content;
+    expect(prompt).toContain("worcester");
+  });
+
+  it("includes a canopy sizing section for cultivation license types", async () => {
+    await worker.fetch(authedPost(VALID_PARCEL_BODY, "/api/parcel"), makeEnv());
+    const prompt = mockCreate.mock.calls[0][0].messages[0].content;
+    expect(prompt.toLowerCase()).toContain("canopy");
+  });
+
+  it("omits canopy section for non-cultivation license types", async () => {
+    await worker.fetch(
+      authedPost({ ...VALID_PARCEL_BODY, licenseType: "Delivery-Only Retailer" }, "/api/parcel"),
+      makeEnv()
+    );
+    const prompt = mockCreate.mock.calls[0][0].messages[0].content;
+    expect(prompt.toLowerCase()).not.toContain("canopy");
+  });
+
+  it("sets max_tokens greater than zero", async () => {
+    await worker.fetch(authedPost(VALID_PARCEL_BODY, "/api/parcel"), makeEnv());
+    expect(mockCreate.mock.calls[0][0].max_tokens).toBeGreaterThan(0);
+  });
+
+  it("sets CORS headers on 200 response", async () => {
+    const res = await worker.fetch(authedPost(VALID_PARCEL_BODY, "/api/parcel"), makeEnv());
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+  });
+
+  it("returns 502 when Claude returns empty text", async () => {
+    mockCreate.mockResolvedValueOnce({ content: [{ type: "text", text: "" }] });
+    const res = await worker.fetch(authedPost(VALID_PARCEL_BODY, "/api/parcel"), makeEnv());
+    expect(res.status).toBe(502);
+    const body = await res.json();
+    expect(body.error).toMatch(/empty/i);
+  });
+
+  it("returns 500 when SDK throws", async () => {
+    mockCreate.mockRejectedValueOnce(new Error("Overloaded"));
+    const res = await worker.fetch(authedPost(VALID_PARCEL_BODY, "/api/parcel"), makeEnv());
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toBe("Internal server error.");
+  });
+});
