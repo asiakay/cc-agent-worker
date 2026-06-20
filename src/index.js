@@ -1,5 +1,4 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { renderUI } from "./ui.js";
 import { renderLanding } from "./landing.js";
 import { renderAdmin } from "./admin.js";
 
