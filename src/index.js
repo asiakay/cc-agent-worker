@@ -238,6 +238,76 @@ Mark any [OPERATOR TO CONFIRM] placeholders where site-specific details are need
 `.trim();
 }
 
+/* ── D1 Parcel DB helpers ────────────────────────────────────────────────────*/
+
+/**
+ * Parse shared query-string filters used by /api/parcels and /api/parcels/compliant.
+ */
+export function parseParcelFilters(url) {
+  const city    = url.searchParams.get("city")?.trim().toLowerCase() || null;
+  const useCode = url.searchParams.get("use_code") ? parseInt(url.searchParams.get("use_code"), 10) : null;
+  const limit   = Math.min(Math.max(parseInt(url.searchParams.get("limit")  || "100", 10), 1), 500);
+  const offset  = Math.max(parseInt(url.searchParams.get("offset") || "0", 10), 0);
+  return { city, useCode, limit, offset };
+}
+
+/**
+ * Query the parcels table with optional filters.
+ * Returns { parcels, total, limit, offset }.
+ */
+export async function queryParcels(db, { city, useCode, limit, offset, compliantOnly = false }) {
+  const conditions = [];
+  const bindings   = [];
+
+  if (compliantOnly) { conditions.push("is_compliant = 1"); }
+  if (city)     { conditions.push("LOWER(city) = ?"); bindings.push(city); }
+  if (useCode)  { conditions.push("use_code = ?");    bindings.push(useCode); }
+
+  const where    = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const dataSQL  = `SELECT * FROM parcels ${where} ORDER BY distance_to_closest_ft DESC LIMIT ? OFFSET ?`;
+  const countSQL = `SELECT COUNT(*) AS total FROM parcels ${where}`;
+
+  const [dataResult, countResult] = await Promise.all([
+    db.prepare(dataSQL).bind(...bindings, limit, offset).all(),
+    db.prepare(countSQL).bind(...bindings).first(),
+  ]);
+
+  return {
+    parcels: dataResult.results ?? [],
+    total:   countResult?.total ?? 0,
+    limit,
+    offset,
+  };
+}
+
+/**
+ * Verify the HMAC-SHA-256 signature sent by the Python d1_sync.py script.
+ * Header format: X-Pipeline-Signature: sha256=<hex>
+ */
+export async function verifyPipelineHmac(rawBody, signatureHeader, secret) {
+  if (!signatureHeader?.startsWith("sha256=")) return false;
+  const expected = signatureHeader.slice(7);
+  if (!secret || !expected) return false;
+
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const mac      = await crypto.subtle.sign("HMAC", key, rawBody);
+  const computed = Array.from(new Uint8Array(mac))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+
+  // Constant-time comparison via XOR accumulation
+  if (computed.length !== expected.length) return false;
+  let diff = 0;
+  for (let i = 0; i < computed.length; i++) diff |= computed.charCodeAt(i) ^ expected.charCodeAt(i);
+  return diff === 0;
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === "OPTIONS") {
@@ -566,6 +636,187 @@ Help them take this specific action. Provide concrete, practical guidance ground
       } catch (err) {
         console.error(err);
         return json({ error: "Internal server error." }, 500);
+      }
+    }
+
+    /* ── GET /api/parcels/compliant → compliant parcels from D1 ── */
+    if (request.method === "GET" && path === "/api/parcels/compliant") {
+      if (!env.PARCEL_DB) return json({ error: "PARCEL_DB not configured." }, 503);
+      const filters = parseParcelFilters(url);
+      try {
+        const result = await queryParcels(env.PARCEL_DB, { ...filters, compliantOnly: true });
+        return json({ success: true, ...result });
+      } catch (err) {
+        console.error("[/api/parcels/compliant]", err);
+        return json({ error: "Internal server error." }, 500);
+      }
+    }
+
+    /* ── GET /api/parcels → all parcels (paginated) ── */
+    if (request.method === "GET" && path === "/api/parcels") {
+      if (!env.PARCEL_DB) return json({ error: "PARCEL_DB not configured." }, 503);
+      const filters = parseParcelFilters(url);
+      try {
+        const result = await queryParcels(env.PARCEL_DB, filters);
+        return json({ success: true, ...result });
+      } catch (err) {
+        console.error("[/api/parcels]", err);
+        return json({ error: "Internal server error." }, 500);
+      }
+    }
+
+    /* ── GET /api/parcels/:pid → single parcel detail ── */
+    if (request.method === "GET" && path.startsWith("/api/parcels/")) {
+      if (!env.PARCEL_DB) return json({ error: "PARCEL_DB not configured." }, 503);
+      const pid = decodeURIComponent(path.slice("/api/parcels/".length)).trim();
+      if (!pid) return json({ error: "Missing parcel ID." }, 400);
+      try {
+        const row = await env.PARCEL_DB.prepare(
+          "SELECT * FROM parcels WHERE pid = ?"
+        ).bind(pid).first();
+        if (!row) return json({ error: "Parcel not found." }, 404);
+        return json({ success: true, parcel: row });
+      } catch (err) {
+        console.error("[/api/parcels/:pid]", err);
+        return json({ error: "Internal server error." }, 500);
+      }
+    }
+
+    /* ── GET /api/pipeline/status → last pipeline run stats ── */
+    if (request.method === "GET" && path === "/api/pipeline/status") {
+      if (!env.PARCEL_DB) return json({ error: "PARCEL_DB not configured." }, 503);
+      try {
+        const run = await env.PARCEL_DB.prepare(
+          "SELECT * FROM pipeline_runs ORDER BY id DESC LIMIT 1"
+        ).first();
+        const parcelCount = await env.PARCEL_DB.prepare(
+          "SELECT COUNT(*) AS total, SUM(is_compliant) AS compliant FROM parcels"
+        ).first();
+        return json({
+          success: true,
+          last_run: run ?? null,
+          db_stats: {
+            total_parcels:     parcelCount?.total     ?? 0,
+            compliant_parcels: parcelCount?.compliant ?? 0,
+          },
+        });
+      } catch (err) {
+        console.error("[/api/pipeline/status]", err);
+        return json({ error: "Internal server error." }, 500);
+      }
+    }
+
+    /* ── POST /api/pipeline/sync → receive results from Python engine ── */
+    if (request.method === "POST" && path === "/api/pipeline/sync") {
+      if (!env.PARCEL_DB)     return json({ error: "PARCEL_DB not configured." }, 503);
+      if (!env.PIPELINE_SECRET) return json({ error: "PIPELINE_SECRET not configured." }, 503);
+
+      const rawBody = await request.arrayBuffer();
+      const sig     = request.headers.get("X-Pipeline-Signature") ?? "";
+
+      const valid = await verifyPipelineHmac(rawBody, sig, env.PIPELINE_SECRET);
+      if (!valid) return json({ error: "Invalid pipeline signature." }, 401);
+
+      let body;
+      try {
+        body = JSON.parse(new TextDecoder().decode(rawBody));
+      } catch {
+        return json({ error: "Invalid JSON body." }, 400);
+      }
+
+      const { parcels = [], sensitive_sites = [], stats = {}, run_at, duration_seconds } = body;
+
+      if (!Array.isArray(parcels)) return json({ error: "parcels must be an array." }, 400);
+
+      try {
+        // Record the pipeline run first to get an ID
+        await env.PARCEL_DB.prepare(
+          `INSERT INTO pipeline_runs (run_at, status, total_screened, compliant_count, disqualified_count, duration_seconds)
+           VALUES (?, 'complete', ?, ?, ?, ?)`
+        ).bind(
+          run_at ?? new Date().toISOString(),
+          stats.total_screened    ?? parcels.length,
+          stats.compliant_count   ?? 0,
+          stats.disqualified_count ?? 0,
+          duration_seconds ?? null,
+        ).run();
+
+        const runRow = await env.PARCEL_DB.prepare(
+          "SELECT id FROM pipeline_runs ORDER BY id DESC LIMIT 1"
+        ).first();
+        const runId = runRow?.id ?? null;
+
+        // Upsert sensitive sites (chunk into batches of 50)
+        if (sensitive_sites.length > 0) {
+          const SITE_BATCH = 50;
+          for (let i = 0; i < sensitive_sites.length; i += SITE_BATCH) {
+            const chunk = sensitive_sites.slice(i, i + SITE_BATCH);
+            const stmts = chunk.map((s) =>
+              env.PARCEL_DB.prepare(
+                `INSERT OR IGNORE INTO sensitive_sites (site_name, site_type, city, lat, lon)
+                 VALUES (?, ?, ?, ?, ?)`
+              ).bind(s.site_name ?? null, s.site_type ?? "K12_SCHOOL", s.city ?? null, s.lat ?? null, s.lon ?? null)
+            );
+            await env.PARCEL_DB.batch(stmts);
+          }
+        }
+
+        // Upsert parcels in batches of 50
+        let inserted = 0;
+        const PARCEL_BATCH = 50;
+        for (let i = 0; i < parcels.length; i += PARCEL_BATCH) {
+          const chunk = parcels.slice(i, i + PARCEL_BATCH);
+          const stmts = chunk.map((p) =>
+            env.PARCEL_DB.prepare(
+              `INSERT OR REPLACE INTO parcels
+                 (pid, st_num, st_name, city, zip_code, use_code, gross_area, land_sf, av_total,
+                  lat, lon, is_compliant, closest_sensitive_site_name, distance_to_closest_ft,
+                  last_screened_at, pipeline_run_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)`
+            ).bind(
+              p.pid ?? null, p.st_num ?? null, p.st_name ?? null, p.city ?? null, p.zip_code ?? null,
+              p.use_code ?? null, p.gross_area ?? null, p.land_sf ?? null, p.av_total ?? null,
+              p.lat ?? null, p.lon ?? null,
+              p.is_compliant ? 1 : 0,
+              p.closest_sensitive_site_name ?? null,
+              p.distance_to_closest_ft ?? null,
+              runId,
+            )
+          );
+          await env.PARCEL_DB.batch(stmts);
+          inserted += chunk.length;
+        }
+
+        return json({ ok: true, run_id: runId, inserted });
+      } catch (err) {
+        console.error("[/api/pipeline/sync]", err);
+        return json({ error: "Internal server error." }, 500);
+      }
+    }
+
+    /* ── POST /api/pipeline/trigger → dispatch webhook to Python runner ── */
+    if (request.method === "POST" && path === "/api/pipeline/trigger") {
+      if (!await checkBearer(request, env)) {
+        if (!env.ADMIN_TOKEN) return json({ error: "ADMIN_TOKEN not configured." }, 500);
+        return json({ error: "Unauthorized." }, 401);
+      }
+      if (!env.PIPELINE_WEBHOOK_URL) {
+        return json({ error: "PIPELINE_WEBHOOK_URL not configured." }, 503);
+      }
+      try {
+        const triggerResp = await fetch(env.PIPELINE_WEBHOOK_URL, {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({ triggered_at: new Date().toISOString() }),
+        });
+        if (!triggerResp.ok) {
+          const detail = await triggerResp.text();
+          return json({ error: "Pipeline webhook returned error.", detail }, 502);
+        }
+        return json({ ok: true, triggered_at: new Date().toISOString() });
+      } catch (err) {
+        console.error("[/api/pipeline/trigger]", err);
+        return json({ error: "Pipeline webhook unreachable." }, 502);
       }
     }
 

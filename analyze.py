@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 DATA_DIR = Path(__file__).parent / "data"
-SRC_DIR  = Path(__file__).parent / "src"
+SRC_DIR  = Path(__file__).parent / "data-engine" / "src"
 
 FETCH_SCRIPT  = SRC_DIR / "fetch_raw_data.py"
 SCREEN_SCRIPT = SRC_DIR / "spatial_screen.py"
