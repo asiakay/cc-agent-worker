@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import worker, { buildSystemInstruction, buildPrompt, createSessionToken } from "./index.js";
+import worker, {
+  buildSystemInstruction,
+  buildPrompt,
+  createSessionToken,
+  parseParcelFilters,
+  queryParcels,
+  verifyPipelineHmac,
+} from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Mock the Anthropic SDK — no real network calls
@@ -1409,5 +1416,592 @@ describe("POST /api/parcel — happy path", () => {
     expect(res.status).toBe(500);
     const body = await res.json();
     expect(body.error).toBe("Internal server error.");
+  });
+});
+
+// =============================================================================
+// D1 helpers — parseParcelFilters
+// =============================================================================
+
+describe("parseParcelFilters", () => {
+  function u(qs) { return new URL(`https://worker.example/api/parcels${qs ? "?" + qs : ""}`); }
+
+  it("defaults to limit=100, offset=0, no city, no use_code", () => {
+    const f = parseParcelFilters(u(""));
+    expect(f).toEqual({ city: null, useCode: null, limit: 100, offset: 0 });
+  });
+
+  it("parses city as lower-case", () => {
+    const f = parseParcelFilters(u("city=Chelsea"));
+    expect(f.city).toBe("chelsea");
+  });
+
+  it("parses use_code as integer", () => {
+    const f = parseParcelFilters(u("use_code=401"));
+    expect(f.useCode).toBe(401);
+  });
+
+  it("clamps limit to 500 max", () => {
+    const f = parseParcelFilters(u("limit=9999"));
+    expect(f.limit).toBe(500);
+  });
+
+  it("clamps limit to 1 min", () => {
+    const f = parseParcelFilters(u("limit=0"));
+    expect(f.limit).toBe(1);
+  });
+
+  it("clamps offset to 0 min", () => {
+    const f = parseParcelFilters(u("offset=-5"));
+    expect(f.offset).toBe(0);
+  });
+
+  it("parses all filters together", () => {
+    const f = parseParcelFilters(u("city=Boston&use_code=400&limit=25&offset=50"));
+    expect(f).toEqual({ city: "boston", useCode: 400, limit: 25, offset: 50 });
+  });
+});
+
+// =============================================================================
+// D1 helpers — queryParcels
+// =============================================================================
+
+function makeD1(allRows = [], firstRow = null) {
+  const stmtMock = {
+    bind:  vi.fn().mockReturnThis(),
+    all:   vi.fn().mockResolvedValue({ results: allRows }),
+    first: vi.fn().mockResolvedValue(firstRow ?? (allRows[0] ?? null)),
+    run:   vi.fn().mockResolvedValue({ success: true }),
+  };
+  return {
+    prepare: vi.fn().mockReturnValue(stmtMock),
+    batch:   vi.fn().mockResolvedValue([]),
+    _stmt:   stmtMock,
+  };
+}
+
+const SAMPLE_PARCELS = [
+  { pid: "BOS-0001", city: "Boston",  use_code: 401, is_compliant: 1, distance_to_closest_ft: 620.5 },
+  { pid: "CHE-0001", city: "Chelsea", use_code: 440, is_compliant: 0, distance_to_closest_ft: 451.0 },
+];
+
+describe("queryParcels", () => {
+  it("returns parcels and total", async () => {
+    const db = makeD1(SAMPLE_PARCELS, { total: 2 });
+    const result = await queryParcels(db, { city: null, useCode: null, limit: 100, offset: 0 });
+    expect(result.parcels).toHaveLength(2);
+    expect(result.total).toBe(2);
+    expect(result.limit).toBe(100);
+    expect(result.offset).toBe(0);
+  });
+
+  it("calls prepare twice (data + count)", async () => {
+    const db = makeD1(SAMPLE_PARCELS, { total: 2 });
+    await queryParcels(db, { city: null, useCode: null, limit: 10, offset: 0 });
+    expect(db.prepare).toHaveBeenCalledTimes(2);
+  });
+
+  it("includes WHERE is_compliant = 1 when compliantOnly=true", async () => {
+    const db = makeD1([], { total: 0 });
+    await queryParcels(db, { city: null, useCode: null, limit: 10, offset: 0, compliantOnly: true });
+    const sql = db.prepare.mock.calls[0][0];
+    expect(sql).toContain("is_compliant = 1");
+  });
+
+  it("includes city filter when provided", async () => {
+    const db = makeD1([], { total: 0 });
+    await queryParcels(db, { city: "boston", useCode: null, limit: 10, offset: 0 });
+    const sql = db.prepare.mock.calls[0][0];
+    expect(sql).toContain("LOWER(city) = ?");
+  });
+
+  it("includes use_code filter when provided", async () => {
+    const db = makeD1([], { total: 0 });
+    await queryParcels(db, { city: null, useCode: 401, limit: 10, offset: 0 });
+    const sql = db.prepare.mock.calls[0][0];
+    expect(sql).toContain("use_code = ?");
+  });
+
+  it("returns empty array when db returns no results", async () => {
+    const db = makeD1([], { total: 0 });
+    const result = await queryParcels(db, { city: null, useCode: null, limit: 10, offset: 0 });
+    expect(result.parcels).toEqual([]);
+    expect(result.total).toBe(0);
+  });
+});
+
+// =============================================================================
+// D1 helpers — verifyPipelineHmac
+// =============================================================================
+
+async function makeHmac(body, secret) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const mac = await crypto.subtle.sign("HMAC", key, body);
+  const hex = Array.from(new Uint8Array(mac)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `sha256=${hex}`;
+}
+
+describe("verifyPipelineHmac", () => {
+  const secret  = "test-pipeline-secret";
+  const payload = new TextEncoder().encode(JSON.stringify({ hello: "world" }));
+
+  it("returns true for valid signature", async () => {
+    const sig    = await makeHmac(payload, secret);
+    const result = await verifyPipelineHmac(payload, sig, secret);
+    expect(result).toBe(true);
+  });
+
+  it("returns false for wrong secret", async () => {
+    const sig    = await makeHmac(payload, "wrong-secret");
+    const result = await verifyPipelineHmac(payload, sig, secret);
+    expect(result).toBe(false);
+  });
+
+  it("returns false for tampered body", async () => {
+    const sig     = await makeHmac(payload, secret);
+    const tampered = new TextEncoder().encode(JSON.stringify({ hello: "EVIL" }));
+    const result  = await verifyPipelineHmac(tampered, sig, secret);
+    expect(result).toBe(false);
+  });
+
+  it("returns false when header is missing", async () => {
+    const result = await verifyPipelineHmac(payload, null, secret);
+    expect(result).toBe(false);
+  });
+
+  it("returns false when header lacks sha256= prefix", async () => {
+    const sig    = await makeHmac(payload, secret);
+    const result = await verifyPipelineHmac(payload, sig.slice(7), secret);
+    expect(result).toBe(false);
+  });
+
+  it("returns false when secret is empty", async () => {
+    const sig    = await makeHmac(payload, secret);
+    const result = await verifyPipelineHmac(payload, sig, "");
+    expect(result).toBe(false);
+  });
+});
+
+// =============================================================================
+// GET /api/parcels/compliant
+// =============================================================================
+
+describe("GET /api/parcels/compliant", () => {
+  function makeEnvWithD1(rows = SAMPLE_PARCELS.filter((p) => p.is_compliant === 1)) {
+    const db = makeD1(rows, { total: rows.length });
+    return { ...makeEnv(), PARCEL_DB: db };
+  }
+
+  it("returns 200 with compliant parcels", async () => {
+    const res  = await worker.fetch(get("/api/parcels/compliant"), makeEnvWithD1());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(Array.isArray(body.parcels)).toBe(true);
+  });
+
+  it("returns 503 when PARCEL_DB not bound", async () => {
+    const env = makeEnv();
+    delete env.PARCEL_DB;
+    const res = await worker.fetch(get("/api/parcels/compliant"), env);
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toMatch(/PARCEL_DB/);
+  });
+
+  it("passes compliantOnly=true to queryParcels", async () => {
+    const db  = makeD1([], { total: 0 });
+    const env = { ...makeEnv(), PARCEL_DB: db };
+    await worker.fetch(get("/api/parcels/compliant"), env);
+    const sql = db.prepare.mock.calls[0][0];
+    expect(sql).toContain("is_compliant = 1");
+  });
+
+  it("accepts city filter via query string", async () => {
+    const db  = makeD1([], { total: 0 });
+    const env = { ...makeEnv(), PARCEL_DB: db };
+    await worker.fetch(get("/api/parcels/compliant?city=Boston"), env);
+    const sql = db.prepare.mock.calls[0][0];
+    expect(sql).toContain("LOWER(city) = ?");
+  });
+
+  it("sets CORS headers", async () => {
+    const res = await worker.fetch(get("/api/parcels/compliant"), makeEnvWithD1());
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+  });
+
+  it("returns total and pagination fields", async () => {
+    const res  = await worker.fetch(get("/api/parcels/compliant"), makeEnvWithD1());
+    const body = await res.json();
+    expect(typeof body.total).toBe("number");
+    expect(typeof body.limit).toBe("number");
+    expect(typeof body.offset).toBe("number");
+  });
+});
+
+// =============================================================================
+// GET /api/parcels
+// =============================================================================
+
+describe("GET /api/parcels", () => {
+  function makeEnvWithD1() {
+    const db = makeD1(SAMPLE_PARCELS, { total: 2 });
+    return { ...makeEnv(), PARCEL_DB: db };
+  }
+
+  it("returns 200 with all parcels", async () => {
+    const res  = await worker.fetch(get("/api/parcels"), makeEnvWithD1());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.parcels).toHaveLength(2);
+  });
+
+  it("returns 503 when PARCEL_DB not bound", async () => {
+    const env = makeEnv();
+    delete env.PARCEL_DB;
+    const res = await worker.fetch(get("/api/parcels"), env);
+    expect(res.status).toBe(503);
+  });
+
+  it("does NOT add is_compliant filter without compliantOnly", async () => {
+    const db  = makeD1([], { total: 0 });
+    const env = { ...makeEnv(), PARCEL_DB: db };
+    await worker.fetch(get("/api/parcels"), env);
+    const sql = db.prepare.mock.calls[0][0];
+    expect(sql).not.toContain("is_compliant");
+  });
+
+  it("accepts use_code filter", async () => {
+    const db  = makeD1([], { total: 0 });
+    const env = { ...makeEnv(), PARCEL_DB: db };
+    await worker.fetch(get("/api/parcels?use_code=401"), env);
+    const sql = db.prepare.mock.calls[0][0];
+    expect(sql).toContain("use_code = ?");
+  });
+
+  it("returns pagination metadata", async () => {
+    const res  = await worker.fetch(get("/api/parcels?limit=10&offset=20"), makeEnvWithD1());
+    const body = await res.json();
+    expect(body.limit).toBe(10);
+    expect(body.offset).toBe(20);
+  });
+});
+
+// =============================================================================
+// GET /api/parcels/:pid
+// =============================================================================
+
+describe("GET /api/parcels/:pid", () => {
+  const SAMPLE_PARCEL = { pid: "BOS-0001", city: "Boston", is_compliant: 1 };
+
+  function makeEnvWithD1(row = SAMPLE_PARCEL) {
+    const db = makeD1([row], row);
+    return { ...makeEnv(), PARCEL_DB: db };
+  }
+
+  it("returns 200 with the parcel", async () => {
+    const res  = await worker.fetch(get("/api/parcels/BOS-0001"), makeEnvWithD1());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.parcel.pid).toBe("BOS-0001");
+  });
+
+  it("returns 404 when parcel not found", async () => {
+    const db  = makeD1([], null);
+    db._stmt.first.mockResolvedValue(null);
+    const env = { ...makeEnv(), PARCEL_DB: db };
+    const res = await worker.fetch(get("/api/parcels/UNKNOWN"), env);
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toMatch(/not found/i);
+  });
+
+  it("returns 503 when PARCEL_DB not bound", async () => {
+    const env = makeEnv();
+    delete env.PARCEL_DB;
+    const res = await worker.fetch(get("/api/parcels/BOS-0001"), env);
+    expect(res.status).toBe(503);
+  });
+
+  it("queries using the pid from the URL", async () => {
+    const db  = makeD1([SAMPLE_PARCEL], SAMPLE_PARCEL);
+    const env = { ...makeEnv(), PARCEL_DB: db };
+    await worker.fetch(get("/api/parcels/BOS-0001"), env);
+    expect(db._stmt.bind).toHaveBeenCalledWith("BOS-0001");
+  });
+});
+
+// =============================================================================
+// GET /api/pipeline/status
+// =============================================================================
+
+describe("GET /api/pipeline/status", () => {
+  const SAMPLE_RUN = {
+    id: 1, run_at: "2026-06-22T00:00:00Z", status: "complete",
+    total_screened: 60, compliant_count: 20, disqualified_count: 40,
+    duration_seconds: 12.3,
+  };
+  const SAMPLE_COUNT = { total: 60, compliant: 20 };
+
+  function makeEnvWithD1() {
+    const stmtMock = {
+      bind:  vi.fn().mockReturnThis(),
+      all:   vi.fn().mockResolvedValue({ results: [SAMPLE_RUN] }),
+      first: vi.fn()
+        .mockResolvedValueOnce(SAMPLE_RUN)
+        .mockResolvedValueOnce(SAMPLE_COUNT),
+      run:   vi.fn().mockResolvedValue({ success: true }),
+    };
+    const db = {
+      prepare: vi.fn().mockReturnValue(stmtMock),
+      batch:   vi.fn().mockResolvedValue([]),
+      _stmt:   stmtMock,
+    };
+    return { ...makeEnv(), PARCEL_DB: db };
+  }
+
+  it("returns 200 with last_run and db_stats", async () => {
+    const res  = await worker.fetch(get("/api/pipeline/status"), makeEnvWithD1());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.last_run).toBeTruthy();
+    expect(body.db_stats).toBeTruthy();
+  });
+
+  it("returns 503 when PARCEL_DB not bound", async () => {
+    const env = makeEnv();
+    delete env.PARCEL_DB;
+    const res = await worker.fetch(get("/api/pipeline/status"), env);
+    expect(res.status).toBe(503);
+  });
+
+  it("db_stats has total_parcels and compliant_parcels fields", async () => {
+    const res  = await worker.fetch(get("/api/pipeline/status"), makeEnvWithD1());
+    const body = await res.json();
+    expect(typeof body.db_stats.total_parcels).toBe("number");
+    expect(typeof body.db_stats.compliant_parcels).toBe("number");
+  });
+
+  it("returns null last_run when no runs exist", async () => {
+    const stmtMock = {
+      bind:  vi.fn().mockReturnThis(),
+      first: vi.fn().mockResolvedValue(null),
+      all:   vi.fn().mockResolvedValue({ results: [] }),
+      run:   vi.fn(),
+    };
+    const db  = { prepare: vi.fn().mockReturnValue(stmtMock), batch: vi.fn() };
+    const env = { ...makeEnv(), PARCEL_DB: db };
+    const res  = await worker.fetch(get("/api/pipeline/status"), env);
+    const body = await res.json();
+    expect(body.last_run).toBeNull();
+  });
+});
+
+// =============================================================================
+// POST /api/pipeline/sync
+// =============================================================================
+
+async function signedSyncRequest(body, secret = "test-secret") {
+  const raw = JSON.stringify(body);
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(raw));
+  const hex = Array.from(new Uint8Array(mac)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  return new Request("https://worker.example/api/pipeline/sync", {
+    method:  "POST",
+    headers: {
+      "Content-Type":          "application/json",
+      "X-Pipeline-Signature":  `sha256=${hex}`,
+    },
+    body: raw,
+  });
+}
+
+const SYNC_PAYLOAD = {
+  run_at: "2026-06-22T00:00:00Z",
+  duration_seconds: 5.5,
+  parcels: [
+    { pid: "BOS-0001", city: "Boston", use_code: 401, is_compliant: true, distance_to_closest_ft: 620.5,
+      st_num: "100", st_name: "INDUSTRIAL WAY", zip_code: "02128", gross_area: 12000, land_sf: 8000,
+      av_total: 500000, lat: 42.36, lon: -71.05, closest_sensitive_site_name: "East Boston HS" },
+  ],
+  sensitive_sites: [
+    { site_name: "East Boston HS", site_type: "K12_SCHOOL", city: "Boston", lat: 42.37, lon: -71.04 },
+  ],
+  stats: { total_screened: 1, compliant_count: 1, disqualified_count: 0 },
+};
+
+function makeSyncEnv(secret = "test-secret") {
+  return { ...makeEnv(), PARCEL_DB: makeD1([], { id: 1 }), PIPELINE_SECRET: secret };
+}
+
+describe("POST /api/pipeline/sync", () => {
+  it("returns 200 and ok=true for valid signed payload", async () => {
+    const req = await signedSyncRequest(SYNC_PAYLOAD);
+    const res = await worker.fetch(req, makeSyncEnv());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+  });
+
+  it("returns 401 for invalid signature", async () => {
+    const req = new Request("https://worker.example/api/pipeline/sync", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json", "X-Pipeline-Signature": "sha256=deadbeef" },
+      body:    JSON.stringify(SYNC_PAYLOAD),
+    });
+    const res = await worker.fetch(req, makeSyncEnv());
+    expect(res.status).toBe(401);
+    const body = await res.json();
+    expect(body.error).toMatch(/signature/i);
+  });
+
+  it("returns 401 when signature is missing", async () => {
+    const req = new Request("https://worker.example/api/pipeline/sync", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify(SYNC_PAYLOAD),
+    });
+    const res = await worker.fetch(req, makeSyncEnv());
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 503 when PARCEL_DB not bound", async () => {
+    const req = await signedSyncRequest(SYNC_PAYLOAD);
+    const env = { ...makeSyncEnv() };
+    delete env.PARCEL_DB;
+    const res = await worker.fetch(req, env);
+    expect(res.status).toBe(503);
+  });
+
+  it("returns 503 when PIPELINE_SECRET not configured", async () => {
+    const req = await signedSyncRequest(SYNC_PAYLOAD);
+    const env = { ...makeSyncEnv() };
+    delete env.PIPELINE_SECRET;
+    const res = await worker.fetch(req, env);
+    expect(res.status).toBe(503);
+  });
+
+  it("returns 400 for invalid JSON body with valid signature", async () => {
+    const raw = "not-json{{{";
+    const key = await crypto.subtle.importKey(
+      "raw", new TextEncoder().encode("test-secret"),
+      { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+    );
+    const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(raw));
+    const hex = Array.from(new Uint8Array(mac)).map((b) => b.toString(16).padStart(2, "0")).join("");
+    const req = new Request("https://worker.example/api/pipeline/sync", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json", "X-Pipeline-Signature": `sha256=${hex}` },
+      body:    raw,
+    });
+    const res = await worker.fetch(req, makeSyncEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it("calls db.batch to insert parcels", async () => {
+    const req = await signedSyncRequest(SYNC_PAYLOAD);
+    const env = makeSyncEnv();
+    await worker.fetch(req, env);
+    expect(env.PARCEL_DB.batch).toHaveBeenCalled();
+  });
+
+  it("returns inserted count in response", async () => {
+    const req  = await signedSyncRequest(SYNC_PAYLOAD);
+    const res  = await worker.fetch(req, makeSyncEnv());
+    const body = await res.json();
+    expect(typeof body.inserted).toBe("number");
+    expect(body.inserted).toBe(1);
+  });
+
+  it("returns run_id in response", async () => {
+    const req  = await signedSyncRequest(SYNC_PAYLOAD);
+    const res  = await worker.fetch(req, makeSyncEnv());
+    const body = await res.json();
+    expect(body.run_id).toBeDefined();
+  });
+
+  it("handles payload with empty parcels array gracefully", async () => {
+    const payload = { ...SYNC_PAYLOAD, parcels: [], stats: { total_screened: 0, compliant_count: 0, disqualified_count: 0 } };
+    const req  = await signedSyncRequest(payload);
+    const res  = await worker.fetch(req, makeSyncEnv());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.inserted).toBe(0);
+  });
+});
+
+// =============================================================================
+// POST /api/pipeline/trigger
+// =============================================================================
+
+describe("POST /api/pipeline/trigger", () => {
+  function makeEnvWithWebhook(url = "https://runner.example/run") {
+    return { ...makeEnv(), PIPELINE_WEBHOOK_URL: url };
+  }
+
+  it("returns 200 when webhook succeeds", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), { status: 200 })
+    ));
+    const res  = await worker.fetch(authedPost({}, "/api/pipeline/trigger"), makeEnvWithWebhook());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.triggered_at).toBeTruthy();
+    vi.unstubAllGlobals();
+  });
+
+  it("returns 401 without auth", async () => {
+    const res = await worker.fetch(post({}, "/api/pipeline/trigger"), makeEnvWithWebhook());
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 503 when PIPELINE_WEBHOOK_URL not configured", async () => {
+    const env = makeEnv();
+    delete env.PIPELINE_WEBHOOK_URL;
+    const res = await worker.fetch(authedPost({}, "/api/pipeline/trigger"), env);
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toMatch(/PIPELINE_WEBHOOK_URL/);
+  });
+
+  it("returns 502 when webhook returns non-ok status", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response("Internal Server Error", { status: 500 })
+    ));
+    const res = await worker.fetch(authedPost({}, "/api/pipeline/trigger"), makeEnvWithWebhook());
+    expect(res.status).toBe(502);
+    vi.unstubAllGlobals();
+  });
+
+  it("returns 502 when webhook is unreachable", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    const res = await worker.fetch(authedPost({}, "/api/pipeline/trigger"), makeEnvWithWebhook());
+    expect(res.status).toBe(502);
+    vi.unstubAllGlobals();
+  });
+
+  it("demo token is accepted", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), { status: 200 })
+    ));
+    const res = await worker.fetch(demoPost({}, "/api/pipeline/trigger"), makeEnvWithWebhook());
+    expect(res.status).toBe(200);
+    vi.unstubAllGlobals();
   });
 });
