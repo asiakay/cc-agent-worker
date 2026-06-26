@@ -1,6 +1,11 @@
 name = "cc-agent-worker"
-main = "src/index.js"
-compatibility_date = "2024-09-23"
+main = "src/worker.js"
+compatibility_date = "2024-01-01"
+workers_dev = false
+
+[[routes]]
+pattern = "cc.frontporcheconomics.com/*"
+zone_name = "frontporcheconomics.com"
 
 # ─── Secrets ─────────────────────────────────────────────────────────────────
 # Store secrets with wrangler — never commit raw values:
